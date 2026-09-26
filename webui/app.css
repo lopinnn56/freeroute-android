@@ -1,0 +1,276 @@
+/* FreeRoute 网关 — 视觉规格严格复刻 CLIProxyAPI for Android (UiTheme.java)
+   色板、圆角、间距、字体全部对齐；纯扁平填充 + 1px 描边，无阴影/渐变/涟漪。 */
+:root {
+  --bg: #0D1117;
+  --surface: #161B22;
+  --surface-alt: #21262D;
+  --border: #30363D;
+  --border-sub: #21262D;
+  --text: #E6EDF3;
+  --dim: #8B949E;
+  --green: #2EA043;
+  --blue: #58A6FF;
+  --purple: #BC8CFF;
+  --red: #DA3633;
+  --cyan: #39C5CF;
+  --yellow: #D29922;
+  --console: #080B0F;
+  --console-sep: #1C232E;
+  /* 状态色底/描边对 */
+  --green-bg: #0D2818;
+  --blue-bg: #1F2B3E;
+  --blue-bg-2: #0D2240;
+  --cyan-bg: #0A2328;
+  --red-bg: #2D1214;
+  --red-bg-2: #280A0A;
+  --red-border: #4E1C1F;
+  --purple-bg: #1A102F;
+  --yellow-bg: #2B240B;
+  --amber: #E3B341;
+  --amber-bg: #28200A;
+  --neutral-bg: #252B33;
+  --log-error: #FF7B72;
+  --log-warn: #FFA657;
+  --log-success: #7EE787;
+  --log-info-a: #79C0FF;
+  --log-info-b: #E6EDF3;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  font-size: 14px;
+  overscroll-behavior: none;
+}
+.mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Roboto Mono", monospace; }
+
+#app { display: flex; flex-direction: column; height: 100%; }
+
+/* ---------- 内容区 ---------- */
+#content {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 8px 12px 4px;
+  overflow: hidden;
+}
+.page { display: none; flex-direction: column; height: 100%; min-height: 0; }
+.page.active { display: flex; }
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.card:first-child { margin-top: 0; }
+.card.tight { padding: 6px 10px; }
+.card.flex { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.card.about { border-radius: 8px; padding: 4px 12px; }
+
+/* ---------- 区块标题 ---------- */
+.section-header { padding: 12px 2px 4px; flex-shrink: 0; }
+.section-header .t { font-size: 13px; font-weight: 700; color: var(--dim); }
+.section-header .s { font-size: 11px; color: var(--dim); opacity: .6; margin-top: 2px; }
+
+/* ---------- 行 / 标题行 ---------- */
+.row { display: flex; align-items: center; }
+.row.gap > * + * { margin-left: 4px; }
+.spacer { flex: 1; }
+.card-title { font-size: 11.5px; font-weight: 700; color: var(--text); }
+.card-title.lg { font-size: 12px; }
+.hero-title { font-size: 15px; font-weight: 700; color: var(--text); }
+
+/* ---------- 按钮（createButton 复刻：11.5px，圆角 5，1px 描边，10/5 内边距） ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; line-height: 1.1;
+  padding: 5px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer; user-select: none; white-space: nowrap;
+  font-family: inherit;
+}
+.btn.r3 { border-radius: 3px; }
+.btn.r4 { border-radius: 4px; }
+.btn.sm { padding: 3px 8px; font-size: 10.5px; }
+.btn.xs { padding: 2px 6px; font-size: 9.5px; }
+.btn.flex1 { flex: 1; }
+.btn:disabled, .btn.disabled { opacity: .35; pointer-events: none; }
+.btn.green { color: var(--green); background: var(--green-bg); border-color: var(--green); }
+.btn.blue { color: var(--blue); background: var(--blue-bg-2); border-color: var(--blue); }
+.btn.blue-tint { color: var(--blue); background: var(--blue-bg); border-color: var(--blue); }
+.btn.cyan { color: var(--cyan); background: var(--cyan-bg); border-color: var(--cyan); }
+.btn.red { color: var(--red); background: var(--red-bg); border-color: var(--red-border); }
+.btn.red-solid { color: var(--red); background: var(--red-bg-2); border-color: var(--red-border); }
+.btn.neutral { color: var(--dim); background: var(--surface-alt); border-color: var(--border); }
+.btn.neutral-dark { color: var(--dim); background: var(--neutral-bg); border-color: var(--border); }
+.btn.yellow { color: var(--yellow); background: var(--yellow-bg); border-color: var(--yellow); }
+.btn.plain { color: var(--blue); background: var(--surface-alt); border-color: var(--border); }
+.btn.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+/* ---------- 徽章 ---------- */
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 9.5px; padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--border); background: var(--surface-alt); color: var(--dim);
+  white-space: nowrap;
+}
+.badge.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.badge.purple { color: var(--purple); background: var(--purple-bg); border-color: var(--purple); }
+.badge.cyan { color: var(--cyan); background: var(--cyan-bg); border-color: var(--cyan); }
+.badge.green { color: var(--green); background: var(--green-bg); border-color: var(--green); }
+.badge.blue { color: var(--blue); background: var(--blue-bg); border-color: var(--blue); }
+.badge.red { color: var(--red); background: var(--red-bg); border-color: var(--red); }
+.badge.amber { color: var(--amber); background: var(--amber-bg); border-color: var(--amber); }
+.badge.dim { color: var(--dim); background: var(--surface-alt); border-color: var(--border); }
+
+/* ---------- 状态点 ---------- */
+.dot { width: 6px; height: 6px; border-radius: 3px; background: var(--dim); flex-shrink: 0; }
+.dot.on { background: var(--green); }
+.dot.warn { background: var(--yellow); }
+.dot.err { background: var(--red); }
+
+/* ---------- 分隔线 ---------- */
+.hr { height: 1px; background: var(--border-sub); margin: 4px 0; }
+.hr.tight { margin: 2px 0; }
+.hr.about { margin: 0; }
+
+/* ---------- 端点块 ---------- */
+.ep-label { font-size: 10.5px; font-weight: 700; color: var(--blue); }
+.ep-url {
+  font-size: 10.5px; font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--text); flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left;
+}
+.ep-url.ltr { direction: ltr; }
+
+/* ---------- 日志控制台 ---------- */
+.log-wrap {
+  flex: 1; min-height: 0; background: var(--console);
+  border-radius: 4px; overflow-y: auto; padding: 4px 6px;
+  -webkit-overflow-scrolling: touch;
+}
+.log-line {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px; line-height: 1.45; padding: 1px;
+  word-break: break-all; white-space: pre-wrap;
+  border-bottom: 1px solid var(--console-sep);
+}
+.log-line:last-child { border-bottom: none; }
+.log-line.error { color: var(--log-error); }
+.log-line.warn { color: var(--log-warn); }
+.log-line.success { color: var(--log-success); }
+.log-line.info-a { color: var(--log-info-a); }
+.log-line.info-b { color: var(--log-info-b); }
+
+/* ---------- KPI 网格 ---------- */
+.kpi-grid { display: flex; flex-wrap: wrap; padding: 2px 0; }
+.kpi { width: 33.333%; padding: 4px 2px; }
+.kpi .l { font-size: 10px; color: var(--dim); }
+.kpi .v { font-size: 14px; font-weight: 700; margin-top: 2px; }
+.kpi .v.blue { color: var(--blue); }
+.kpi .v.green { color: var(--green); }
+.kpi .v.red { color: var(--red); }
+.kpi .v.cyan { color: var(--cyan); }
+.kpi .v.purple { color: var(--purple); }
+.kpi .v.amber { color: var(--amber); }
+
+/* ---------- 上游卡片 ---------- */
+.up-head { display: flex; align-items: center; }
+.up-body { margin-top: 6px; display: none; }
+.up.open .up-body { display: block; }
+.up-name { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.up-note { font-size: 10.5px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
+.up-meta { font-size: 10.5px; color: var(--dim); margin-top: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.up-caret { color: var(--dim); font-size: 10px; transition: transform .15s; }
+.up.open .up-caret { transform: rotate(90deg); }
+
+/* ---------- 表单 ---------- */
+.field-label { font-size: 11px; color: var(--dim); margin: 6px 0 2px; }
+.input {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 8px; font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  outline: none;
+}
+.input:focus { border-color: var(--blue); }
+.input::placeholder { color: rgba(139,148,158,.6); }
+textarea.input { resize: vertical; min-height: 56px; }
+.pill-row { display: flex; margin-top: 4px; }
+.pill-row .btn { flex: 1; }
+.pill-row .btn + .btn { margin-left: 4px; }
+
+/* ---------- 空状态 ---------- */
+.empty { font-size: 11px; color: var(--dim); padding: 8px 4px; line-height: 1.6; }
+
+/* ---------- 审计列表 ---------- */
+.audit-wrap { flex: 1; min-height: 0; background: var(--console); border-radius: 4px; overflow-y: auto; padding: 4px 6px; }
+.audit-row { display: flex; align-items: center; padding: 3px 2px; border-bottom: 1px solid #151B23; }
+.audit-row:last-child { border-bottom: none; }
+.audit-time { font-size: 9px; color: var(--dim); font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+/* ---------- 关于页 ---------- */
+.about-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.about-inner { display: flex; flex-direction: column; align-items: center; padding: 28px 16px 24px; }
+.about-icon {
+  width: 62px; height: 62px; border-radius: 14px; margin-bottom: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.about-icon svg { width: 36px; height: 36px; }
+.about-name { font-size: 18px; font-weight: 700; color: var(--text); }
+.about-ver { font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--cyan); margin: 4px 0 20px; }
+.about-card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; }
+.about-row { display: flex; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--border-sub); }
+.about-row:last-child { border-bottom: none; }
+.about-row .k { font-size: 12.5px; color: var(--text); flex: 1; }
+.about-row .v { font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--dim); }
+.about-row .v.blue { color: var(--blue); }
+.about-row .v.cyan { color: var(--cyan); }
+.about-row.link { cursor: pointer; }
+.about-footer { font-size: 11px; color: var(--dim); text-align: center; margin-top: 30px; line-height: 1.6; }
+
+/* ---------- 底部 Tab 栏 ---------- */
+#tabbar {
+  height: 50px; flex-shrink: 0; background: var(--surface);
+  display: flex; align-items: center;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+#tabbar .tab { flex: 1; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+#tabbar .pill {
+  width: 46px; height: 26px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+#tabbar .tab.active .pill { background: var(--blue-bg); }
+#tabbar .tab svg { width: 19px; height: 19px; fill: var(--dim); }
+#tabbar .tab.active svg { fill: var(--blue); }
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(20px);
+  background: var(--surface-alt); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 14px; font-size: 12px; max-width: 86vw;
+  opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
+  z-index: 50; text-align: center;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- 进度条 ---------- */
+.progress { height: 4px; background: var(--surface-alt); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.progress > i { display: block; height: 100%; background: var(--cyan); width: 0; transition: width .3s; }
+
+/* ---------- 模型列表 ---------- */
+.model-row { display: flex; align-items: center; padding: 5px 2px; border-bottom: 1px solid var(--border-sub); }
+.model-row:last-child { border-bottom: none; }
+.model-id { font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-via { font-size: 9.5px; color: var(--dim); font-family: ui-monospace, Menlo, Consolas, monospace; }

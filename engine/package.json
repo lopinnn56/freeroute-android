@@ -1,0 +1,7 @@
+{
+  "name": "freeroute-engine",
+  "version": "0.8.19",
+  "type": "module",
+  "private": true,
+  "main": "engine/start.mjs"
+}

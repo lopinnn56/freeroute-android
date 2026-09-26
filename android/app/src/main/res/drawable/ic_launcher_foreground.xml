@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动图标前景：分叉路径 + 节点，呼应「多上游路由」 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp"
+  android:height="108dp"
+  android:viewportWidth="108"
+  android:viewportHeight="108">
+
+  <!-- 主干 -->
+  <path
+    android:strokeColor="#58A6FF"
+    android:strokeWidth="5"
+    android:strokeLineCap="round"
+    android:pathData="M34,72 L34,54" />
+
+  <!-- 上行分支 -->
+  <path
+    android:strokeColor="#39C5CF"
+    android:strokeWidth="5"
+    android:strokeLineCap="round"
+    android:strokeLineJoin="round"
+    android:pathData="M34,54 L52,38 L74,38" />
+
+  <!-- 下行分支 -->
+  <path
+    android:strokeColor="#2EA043"
+    android:strokeWidth="5"
+    android:strokeLineCap="round"
+    android:strokeLineJoin="round"
+    android:pathData="M34,54 L52,68 L74,68" />
+
+  <!-- 汇聚节点 -->
+  <path
+    android:fillColor="#E6EDF3"
+    android:pathData="M34,80 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+
+  <!-- 上游端点 -->
+  <path
+    android:fillColor="#39C5CF"
+    android:pathData="M74,38 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+  <path
+    android:fillColor="#2EA043"
+    android:pathData="M74,68 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+</vector>

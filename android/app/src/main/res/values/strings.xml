@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">FreeRoute</string>
+  <string name="notif_channel_name">引擎运行状态</string>
+  <string name="notif_channel_desc">FreeRoute 引擎后台常驻通知</string>
+  <string name="notif_title">FreeRoute 引擎运行中</string>
+</resources>

@@ -1,0 +1,20 @@
+# 构建产物
+android/app/build/
+android/.gradle/
+android/build/
+out/
+*.apk
+
+# 由 sync-assets.mjs 生成，不入库（CI 每次重建）
+android/app/src/main/assets/nodejs-project/
+
+# 运行时下载的 Node 运行时（体积大，由 CI 拉取）
+android/app/src/main/jniLibs/**/libnode.so
+
+# 本地调试
+engine/dbg.mjs
+*.log
+
+# NDK 构建产物与 CI 下载的 libnode 头文件
+android/app/.cxx/
+android/app/libnode/

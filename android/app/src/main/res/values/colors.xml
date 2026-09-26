@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- 与 CLIProxyAPI / Web UI 一致的深色配色 -->
+  <color name="c_bg">#0D1117</color>
+  <color name="c_surface">#161B22</color>
+  <color name="c_blue">#58A6FF</color>
+</resources>

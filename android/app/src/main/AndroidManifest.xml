@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- 引擎需要联网访问上游免费模型网关 -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <!-- 前台服务：让引擎在后台持续运行（Android 14 要求声明具体类型） -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <application
+    android:allowBackup="false"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:supportsRtl="true"
+    android:usesCleartextTraffic="true"
+    android:networkSecurityConfig="@xml/network_security_config"
+    android:theme="@style/Theme.FreeRoute">
+
+    <activity
+      android:name=".MainActivity"
+      android:exported="true"
+      android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+      android:windowSoftInputMode="adjustResize"
+      android:theme="@style/Theme.FreeRoute">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <!-- 常驻前台服务：承载 Node 引擎进程 -->
+    <service
+      android:name=".EngineService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Local OpenAI-compatible API gateway that must stay reachable by other apps" />
+    </service>
+
+  </application>
+</manifest>

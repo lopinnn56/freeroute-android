@@ -1,0 +1,74 @@
+plugins {
+  id 'com.android.application'
+  id 'org.jetbrains.kotlin.android'
+}
+
+android {
+  namespace 'dev.freeroute.app'
+  compileSdk 34
+  // CI 显式安装该版本（见 .github/workflows/build.yml）；AGP 会按此匹配
+  ndkVersion '26.3.11579264'
+
+  defaultConfig {
+    applicationId "dev.freeroute.app"
+    minSdk 24
+    targetSdk 34
+    versionCode 1
+    versionName "0.8.19"
+    ndk {
+      // 只打包 arm64-v8a：Node 运行时的体积决定不宜再放宽
+      abiFilters 'arm64-v8a'
+    }
+    externalNativeBuild {
+      cmake {
+        // nodejs-mobile 的桥按 c++_shared 构建（见 native-lib.cpp）
+        arguments '-DANDROID_STL=c++_shared'
+      }
+    }
+  }
+
+  // 宿主 JNI 桥（native-lib.cpp → node::Start()）随 NDK 编译
+  externalNativeBuild {
+    cmake {
+      path 'src/main/cpp/CMakeLists.txt'
+      version '3.22.1'
+    }
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+      shrinkResources false
+      // 便于直接安装测试；正式分发应改用自有签名
+      signingConfig signingConfigs.debug
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions { jvmTarget = '17' }
+
+  packagingOptions {
+    jniLibs { useLegacyPackaging = true }
+  }
+
+  // 引擎与 Web UI 是构建产物（由 engine/sync-assets.mjs 生成），不做 lint 阻塞
+  lint { abortOnError false }
+}
+
+dependencies {
+  implementation 'androidx.appcompat:appcompat:1.7.0'
+  implementation 'androidx.core:core-ktx:1.13.1'
+  // Node 运行时以 libnode.so 形式随 jniLibs/arm64-v8a/ 打包，
+  // 由 .github/workflows/build.yml 从 nodejs-mobile release 下载，
+  // 因此这里不需要（也不应）声明任何 Node 相关的 Maven 依赖。
+}
+
+// 将 engine/ 与 webui/ 的最新副本同步进 assets，保证 APK 与源码一致
+tasks.register('syncEngineAssets', Exec) {
+  workingDir rootProject.projectDir.parentFile
+  commandLine 'node', 'engine/sync-assets.mjs'
+}
+tasks.named('preBuild') { dependsOn 'syncEngineAssets' }
