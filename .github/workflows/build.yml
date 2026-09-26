@@ -79,7 +79,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
-          gradle-home-cache-cleanup: true
+          # 注意：不能开 gradle-home-cache-cleanup——它会在 Post Run 阶段跑一个
+          # dummy-cleanup 构建，用到 Gradle 8.7 的只写属性 removeUnusedEntriesOlderThan，
+          # 与 gradle/actions@v3 不兼容导致整个 run 被判红（构建本身其实已成功）。
 
       - name: 构建 Release APK
         working-directory: android
