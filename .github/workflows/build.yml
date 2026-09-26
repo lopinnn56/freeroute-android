@@ -57,13 +57,16 @@ jobs:
           ls -lh android/app/src/main/jniLibs/$ABI/libnode.so
           test -f android/app/libnode/include/node/node.h && echo "头文件就位"
 
-      - name: 安装 NDK + CMake
+      - name: 安装 NDK + CMake（可选，失败时由 AGP 自动下载）
         run: |
-          set -euo pipefail
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMGR" ]; then
-            yes | "$SDKMGR" --install "ndk;26.3.11579264" "cmake;3.22.1"
+            # 不用 `yes |` 管道：sdkmanager 提前退出会让 yes 触发 SIGPIPE，
+            # 在 pipefail 下会把整步判失败。runner 上 SDK 许可已预接受，
+            # 直接喂 /dev/null 即可；安装失败也无妨，AGP 会自行下载。
+            "$SDKMGR" --install "ndk;26.3.11579264" "cmake;3.22.1" </dev/null \
+              || echo "sdkmanager 安装失败，将由 AGP 自动下载 NDK/CMake"
           else
             echo "未找到 sdkmanager（$SDKMGR）——将由 AGP 自动安装"
           fi
