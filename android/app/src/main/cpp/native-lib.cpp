@@ -88,8 +88,3 @@ Java_dev_freeroute_app_NodeRuntime_startNodeWithArguments(
   start_redirecting_stdout_stderr();
   return jint(node::Start(argument_count, argv));
 }
-
-extern "C" JNIEXPORT void JNICALL
-Java_dev_freeroute_app_NodeRuntime_nativeHello(JNIEnv*, jobject) {
-  __android_log_write(ANDROID_LOG_DEBUG, ADBTAG, "node-engine bridge loaded");
-}
