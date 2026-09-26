@@ -9,7 +9,7 @@ import { homedir } from 'node:os'
 
 const rpcMap = new Map()
 
-const VERSION = '0.8.19'
+const VERSION = '0.8.20'
 const ROUTE = 'freeroute'
 const NS = 'free-proxy'
 const UA = 'deepseek-harness/0.1.0-rc.6 (+https://github.com/deepseek-ai/deepseek-harness)'

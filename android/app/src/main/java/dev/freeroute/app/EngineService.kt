@@ -112,8 +112,10 @@ class EngineService : Service() {
         BootLog.log("node", "启动 Node: ${entry.absolutePath}")
         Thread({ awaitReady() }, "engine-ready").start()
 
+        // --start 显式触发引擎启动：规避不同壳下 start.mjs 的 isMain 判定差异，
+        // 保证引擎一定执行 startEngine()——否则 Node 进程活着但不监听端口。
         val rc = NodeRuntime.start(arrayOf(
-          "node", entry.absolutePath, "--home=${home.absolutePath}", "--port=$port"
+          "node", entry.absolutePath, "--home=${home.absolutePath}", "--port=$port", "--start"
         ))
         BootLog.log("node", "Node 事件循环结束，退出码 rc=$rc stopping=${stopping.get()}")
 
