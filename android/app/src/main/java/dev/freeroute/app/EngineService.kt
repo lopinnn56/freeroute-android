@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 因此不受 Android 10+ W^X 限制）。引擎的 HTTP 服务器监听 127.0.0.1:<port>，
  * 其它应用与 WebView 均可访问该 OpenAI 兼容端点。
  *
- * 服务使用 START_STICKY，被系统回收后自动重建；引擎意外退出时按退避重启。
+ * 启动的每一步都写入 BootLog（files/home/boot.log）——失败时 MainActivity
+ * 直接展示并支持一键复制，无需连接电脑找 logcat。
  */
 class EngineService : Service() {
 
@@ -43,12 +44,15 @@ class EngineService : Service() {
   override fun onCreate() {
     super.onCreate()
     prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    BootLog.init(this)
+    BootLog.log("service", "EngineService.onCreate")
     createChannel()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_STOP -> {
+        BootLog.log("service", "收到停止指令")
         stopping.set(true)
         stopEngine()
         stopSelf()
@@ -62,6 +66,7 @@ class EngineService : Service() {
   private fun startEngine() {
     if (!running.compareAndSet(false, true)) return
     stopping.set(false)
+    BootLog.log("boot", "开始启动引擎（第 ${restartCount + 1} 次尝试）")
     startForeground(NOTIF_ID, buildNotification("正在启动引擎…", null))
     acquireWakeLock()
     publish(STATE_STARTING, 0)
@@ -69,11 +74,11 @@ class EngineService : Service() {
     Thread({
       try {
         val projectDir = AssetInstaller.install(this)
-        port = prefs.getInt(PREF_PORT, DEFAULT_PORT)
+        BootLog.log("assets", "引擎资源已释放: ${projectDir.absolutePath}")
 
-        // nodejs-mobile 以共享库形式加载，Node 读取的是**进程环境**而非 JVM 属性，
-        // 因此数据目录与端口都通过命令行参数传递（见 start.mjs 的 --home / --port）。
+        port = prefs.getInt(PREF_PORT, DEFAULT_PORT)
         val home = File(filesDir, "home").apply { mkdirs() }
+        BootLog.log("boot", "数据目录: ${home.absolutePath}  端口: $port")
 
         // Node 读取的是进程环境：HOME/TMPDIR 用 Os.setenv 落进进程，
         // 与 --home/--port 命令行参数互为冗余（nodejs-mobile 官方写法）。
@@ -81,8 +86,10 @@ class EngineService : Service() {
           Os.setenv("HOME", home.absolutePath, true)
           Os.setenv("TMPDIR", cacheDir.absolutePath, true)
           Os.setenv("PATH", "/system/bin:/system/xbin", true)
-        } catch (_: ErrnoException) {
-          Log.w(TAG, "Os.setenv 失败，依赖 --home 参数")
+          BootLog.log("boot", "环境变量已设置 (HOME=$home)")
+        } catch (e: ErrnoException) {
+          BootLog.log("boot", "Os.setenv 失败: ${e.message}")
+          Log.w(TAG, "Os.setenv 失败，依赖 --home 参数", e)
         }
 
         val entry = File(projectDir, "engine/start.mjs")
@@ -90,32 +97,39 @@ class EngineService : Service() {
           fail("引擎入口缺失: ${entry.absolutePath}")
           return@Thread
         }
+        BootLog.log("boot", "入口脚本就位: ${entry.absolutePath}")
 
-        Log.i(TAG, "启动 Node 引擎: ${entry.absolutePath} port=$port home=${home.absolutePath}")
+        // 先确认两个原生库能否加载（libnode.so + JNI 桥）——加载失败是最常见病因
+        BootLog.log("native", "加载 libnode.so / node-engine…")
+        if (!NodeRuntime.ensureLoaded()) {
+          fail("原生库加载失败（见上方 native 日志）")
+          return@Thread
+        }
+        BootLog.log("native", "原生库加载成功")
 
         // startNodeWithArguments 会阻塞到 Node 事件循环结束，因此在旁路线程
         // 轮询健康检查，就绪后广播给 UI 并更新通知。
+        BootLog.log("node", "启动 Node: ${entry.absolutePath}")
         Thread({ awaitReady() }, "engine-ready").start()
 
         val rc = NodeRuntime.start(arrayOf(
           "node", entry.absolutePath, "--home=${home.absolutePath}", "--port=$port"
         ))
+        BootLog.log("node", "Node 事件循环结束，退出码 rc=$rc stopping=${stopping.get()}")
 
-        // startNodeWithArguments 在 Node 事件循环结束时返回
-        Log.w(TAG, "Node 引擎退出，返回码 $rc")
         running.set(false)
         if (stopping.get()) {
-          Log.i(TAG, "已主动停机，不再重启")
+          BootLog.log("boot", "已主动停机，不再重启")
           return@Thread
         }
         if (restartCount < MAX_RESTARTS) {
           restartCount++
           val delay = (1000L shl (restartCount - 1)).coerceAtMost(30_000L)
-          Log.i(TAG, "${delay}ms 后重启引擎（第 $restartCount 次）")
+          BootLog.log("boot", "引擎退出，${delay}ms 后重启（第 $restartCount 次）")
           android.os.Handler(android.os.Looper.getMainLooper())
             .postDelayed({ if (!running.get()) startEngine() }, delay)
         } else {
-          fail("引擎反复退出，已停止自动重启")
+          fail("引擎反复退出（rc=$rc），已停止自动重启")
         }
       } catch (t: Throwable) {
         Log.e(TAG, "引擎启动异常", t)
@@ -127,18 +141,21 @@ class EngineService : Service() {
   /** 轮询健康检查，就绪后更新通知并广播给 UI */
   private fun awaitReady() {
     val deadline = System.currentTimeMillis() + READY_TIMEOUT_MS
+    var lastErr = ""
     while (System.currentTimeMillis() < deadline) {
       if (stopping.get()) return
       if (healthOk(port)) {
         restartCount = 0
+        BootLog.log("ready", "健康检查通过: http://127.0.0.1:$port/freeroute/health")
         notify(buildNotification("引擎运行中 · 端口 $port", port))
         publish(STATE_READY, port)
         Log.i(TAG, "引擎就绪: http://127.0.0.1:$port/freeroute/v1")
         return
       }
       Thread.sleep(250)
+      if (lastErr.isBlank()) lastErr = "端口 $port 无响应"
     }
-    fail("引擎在 ${READY_TIMEOUT_MS / 1000}s 内未就绪")
+    fail("引擎在 ${READY_TIMEOUT_MS / 1000}s 内未就绪（$lastErr）")
   }
 
   private fun healthOk(p: Int): Boolean = try {
@@ -154,6 +171,7 @@ class EngineService : Service() {
   private fun stopEngine() {
     running.set(false)
     stopping.set(true)
+    BootLog.log("boot", "请求引擎优雅退出…")
     // 请求引擎优雅退出：Node 事件循环结束后 start() 返回，boot 线程据此收尾。
     // libnode 是共享库，没有独立进程可 kill，只能走回环 RPC 触发 process.exit()。
     try { NodeRuntime.requestShutdown(port) } catch (_: Exception) {}
@@ -162,6 +180,7 @@ class EngineService : Service() {
   }
 
   private fun fail(msg: String) {
+    BootLog.log("boot", "【失败】$msg")
     Log.e(TAG, msg)
     running.set(false)
     notify(buildNotification(msg, null))

@@ -2,6 +2,8 @@ package dev.freeroute.app
 
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -11,19 +13,21 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.method.ScrollingMovementMethod
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 
@@ -32,6 +36,9 @@ import androidx.core.content.ContextCompat
  *
  * 引擎进程由 EngineService 持有（前台服务），本 Activity 只负责显示与保活：
  * 即使 Activity 被销毁，服务仍在运行，API 端点持续可用。
+ *
+ * 引擎启动失败时（STATE_ERROR），启动页直接展示 BootLog（boot.log）内容，
+ * 并提供「复制日志」「重试」按钮——不用连电脑找 logcat。
  */
 class MainActivity : AppCompatActivity() {
 
@@ -39,6 +46,9 @@ class MainActivity : AppCompatActivity() {
   private lateinit var web: WebView
   private lateinit var splash: LinearLayout
   private lateinit var splashStatus: TextView
+  private lateinit var logScroll: ScrollView
+  private lateinit var logView: TextView
+  private lateinit var btnRow: LinearLayout
   private val ui = Handler(Looper.getMainLooper())
   private var loadedPort = 0
 
@@ -74,15 +84,10 @@ class MainActivity : AppCompatActivity() {
         builtInZoomControls = false
         mediaPlaybackRequiresUserGesture = false
         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-        // 引擎只在 127.0.0.1 上服务，同源即可，无需 file:// 权限
         allowFileAccess = false
         allowContentAccess = false
       }
       webViewClient = object : WebViewClient() {
-        override fun shouldInterceptRequest(
-          view: WebView?, request: WebResourceRequest?
-        ): WebResourceResponse? = null
-
         override fun onPageFinished(view: WebView?, url: String?) {
           if (url != null && url.contains("/freeroute/app")) showWeb()
         }
@@ -108,12 +113,12 @@ class MainActivity : AppCompatActivity() {
   private fun buildSplash(): LinearLayout {
     val box = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      gravity = android.view.Gravity.CENTER
+      gravity = Gravity.CENTER
       setBackgroundColor(Color.parseColor("#0D1117"))
       layoutParams = FrameLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-      isClickable = true // 启动期间吞掉点击
     }
+
     box.addView(TextView(this).apply {
       text = "FreeRoute"
       setTextColor(Color.parseColor("#E6EDF3"))
@@ -124,11 +129,63 @@ class MainActivity : AppCompatActivity() {
       text = "正在启动引擎…"
       setTextColor(Color.parseColor("#8B949E"))
       textSize = 12.5f
-      setPadding(0, 24, 0, 0)
+      setPadding(0, dp(24), 0, 0)
     }
     box.addView(splashStatus)
+
+    // 日志区：失败时显示 boot.log（占满中间空间，可滚动）
+    logScroll = ScrollView(this).apply {
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+      visibility = View.GONE
+      setPadding(dp(16), dp(12), dp(16), dp(4))
+    }
+    logView = TextView(this).apply {
+      setTextColor(Color.parseColor("#8B949E"))
+      textSize = 11f
+      typeface = android.graphics.Typeface.MONOSPACE
+      movementMethod = ScrollingMovementMethod()
+    }
+    logScroll.addView(logView)
+    box.addView(logScroll)
+
+    // 按钮行：复制日志 / 重试
+    btnRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER
+      visibility = View.GONE
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      setPadding(dp(16), dp(4), dp(16), dp(24))
+    }
+    btnRow.addView(button("复制日志") { copyLog() })
+    btnRow.addView(button("重试") { retryEngine() })
+    box.addView(btnRow)
     return box
   }
+
+  private fun button(label: String, onClick: () -> Unit): TextView {
+    val b = TextView(this).apply {
+      text = label
+      setTextColor(Color.parseColor("#58A6FF"))
+      textSize = 13f
+      gravity = Gravity.CENTER
+      setPadding(dp(18), dp(10), dp(18), dp(10))
+      val bg = android.graphics.drawable.GradientDrawable().apply {
+        setColor(Color.parseColor("#161B22"))
+        setStroke(dp(1), Color.parseColor("#30363D"))
+        cornerRadius = dp(5).toFloat()
+      }
+      background = bg
+      setOnClickListener { onClick() }
+    }
+    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+    lp.setMargins(dp(4), dp(8), dp(4), dp(8))
+    b.layoutParams = lp
+    return b
+  }
+
+  private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
   private fun startEngine() {
     val i = Intent(this, EngineService::class.java).setAction(EngineService.ACTION_START)
@@ -158,11 +215,36 @@ class MainActivity : AppCompatActivity() {
             showWeb()
           }
         }
-        EngineService.STATE_STARTING -> splashStatus.text = "正在启动引擎…"
-        EngineService.STATE_ERROR -> splashStatus.text = "引擎启动失败，请查看日志后重试"
+        EngineService.STATE_STARTING -> {
+          splashStatus.text = "正在启动引擎…"
+          logScroll.visibility = View.GONE
+          btnRow.visibility = View.GONE
+        }
+        EngineService.STATE_ERROR -> showBootLog()
         EngineService.STATE_STOPPED -> splashStatus.text = "引擎已停止"
       }
     }
+  }
+
+  private fun showBootLog() {
+    splashStatus.text = "引擎启动失败，原因如下："
+    val lines = BootLog.lines(120)
+    logView.text = if (lines.isEmpty()) "(boot.log 为空)" else lines.joinToString("\n")
+    logScroll.visibility = View.VISIBLE
+    btnRow.visibility = View.VISIBLE
+  }
+
+  private fun copyLog() {
+    val txt = BootLog.fullText()
+    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+      .setPrimaryClip(ClipData.newPlainText("freeroute boot.log", txt))
+    Toast.makeText(this, "日志已复制（${txt.lines().size} 行），发给我即可定位问题", Toast.LENGTH_LONG).show()
+  }
+
+  private fun retryEngine() {
+    Toast.makeText(this, "正在重新启动引擎…", Toast.LENGTH_SHORT).show()
+    try { stopService(Intent(this, EngineService::class.java)) } catch (_: Exception) {}
+    ui.postDelayed({ startEngine() }, 800)
   }
 
   private fun showWeb() {
@@ -180,7 +262,6 @@ class MainActivity : AppCompatActivity() {
 
   override fun onDestroy() {
     try { unregisterReceiver(engineReceiver) } catch (_: Exception) {}
-    // WebView 随 Activity 销毁，引擎服务保持运行
     if (::web.isInitialized) {
       (web.parent as? ViewGroup)?.removeView(web)
       web.destroy()
