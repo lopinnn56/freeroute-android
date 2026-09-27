@@ -106,6 +106,31 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
+      - name: 验证签名指纹（固定 keystore）
+        if: always()
+        run: |
+          set -euo pipefail
+          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          echo "签名证书指纹："
+          # 定位 runner 自带 apksigner（Android SDK build-tools），支持 v1/v2/v3
+          APKSIGNER=$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools/"*/apksigner 2>/dev/null | tail -1)
+          if [ -z "$APKSIGNER" ]; then APKSIGNER=$(command -v apksigner); fi
+          echo "apksigner: ${APKSIGNER:-未找到}"
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] && [ -n "$APKSIGNER" ]; then
+            EXPECTED=D298A364723097E3E6E167B5560A1F60897641BD29D031464772B62C9F80646B
+            ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | grep -i "SHA-256 digest:" | awk '{print $NF}' | tr '[:lower:]' '[:upper:]')
+            echo "期望指纹: $EXPECTED"
+            echo "实际指纹: $ACTUAL"
+            if [ -n "$ACTUAL" ] && [ "$ACTUAL" = "$EXPECTED" ]; then
+              echo "✓ 使用固定 keystore 签名，可原地升级安装"
+            else
+              echo "⚠️ 指纹不匹配或无法读取——升级安装可能被拒"
+              exit 1
+            fi
+          else
+            echo "未配置 secrets 或缺少 apksigner，跳过严格校验"
+          fi
+
       - name: 收集产物（带版本号命名）
         run: |
           set -euo pipefail
