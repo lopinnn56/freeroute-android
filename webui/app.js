@@ -112,8 +112,13 @@ function selectTab(i) {
   currentTab = i;
   document.querySelectorAll('#tabbar .tab').forEach((t, idx) => t.classList.toggle('active', idx === i));
   document.querySelectorAll('.page').forEach((p, idx) => p.classList.toggle('active', idx === i));
-  if (i === 3) refreshMetrics();
+  // 切换到目标页时渲染之：各页根据最新 STATE 重建 UI。之前只渲染服务/仪表，
+  // 导致模型、设置、关于页空白。
   if (i === 0) renderService();
+  else if (i === 1) renderModels();
+  else if (i === 2) renderAdvanced();
+  else if (i === 3) refreshMetrics();
+  else if (i === 4) renderAbout();
 }
 
 // ---------- 渲染：Tab 0 服务 ----------
@@ -162,6 +167,9 @@ function renderService() {
   r3.appendChild(btnSync); r3.appendChild(btnFreellmapi); r3.appendChild(btnProbe); r3.appendChild(btnTest);
   hero.appendChild(r3);
   page.appendChild(hero);
+
+  // 配置备份卡（最显眼位置：Hero 正下方）
+  page.appendChild(buildConfigBackupCard());
 
   // API 端点卡
   const epCard = el('div', 'card');
@@ -587,55 +595,31 @@ function renderAdvanced() {
   };
   const saveConfig = el('div', 'btn green r3', '导出配置');
   saveConfig.style.marginTop = '6px';
-  saveConfig.onclick = async () => {
-    saveConfig.textContent = '导出中…';
-    try {
-      const r = await rpc('freeroute.config.export');
-      if (r && r.ok) {
-        const blob = new Blob([r.text], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'freeroute-config.json';
-        a.click();
-        URL.revokeObjectURL(url);
-        toast('配置已导出为 freeroute-config.json');
-      } else {
-        toast('导出失败: ' + ((r && r.error) || '未知'));
-      }
-    } catch (e) { toast(e.message); }
-    saveConfig.textContent = '导出配置';
+  saveConfig.onclick = () => doExportConfig(saveConfig);
+  const importRow = el('div', 'row gap');
+  importRow.style.marginTop = '6px';
+  const importBtn = el('div', 'btn blue r3 flex1', '恢复配置');
+  importBtn.style.cursor = 'pointer';
+  const hiddenFile = el('input', '');
+  hiddenFile.type = 'file';
+  hiddenFile.accept = '.json';
+  hiddenFile.style.display = 'none';
+  importBtn.onclick = () => { try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); } };
+  hiddenFile.onchange = async function () {
+    const f = hiddenFile.files && hiddenFile.files[0];
+    hiddenFile.value = '';
+    if (f) {
+      importBtn.textContent = '恢复中…';
+      await doImportConfig(f, () => { importBtn.textContent = '恢复配置'; refreshState(); loadRawConfig(); });
+    }
   };
-  const importInput = el('input', 'input');
-  importInput.type = 'file';
-  importInput.accept = '.json';
-  importInput.style.marginTop = '6px';
-  importInput.onchange = async function () {
-    const file = importInput.files[0];
-    if (!file) return;
-    importInput.value = ''; // reset for same file re-select
-    const text = await file.text();
-    importInput.disabled = true;
-    importInput.placeholder = '导入中…';
-    try {
-      const r = await rpc('freeroute.config.import', { text: text });
-      if (r && r.ok) {
-        const c = r.counts || {};
-        toast(`配置已导入：upstreams=${c.upstreams || 0}, keys=${c.keys || 0}`);
-        // 重新读取以显示最新配置
-        if (ta) ta.value = JSON.stringify({ order: (STATE || {}).upstreams || {}, upstreams: {}, proxy: (ENGINE || {}).globalProxy || '' }, null, 2);
-      } else {
-        toast('导入失败: ' + ((r && r.error) || '未知'));
-      }
-    } catch (e) { toast(e.message); }
-    importInput.disabled = false;
-    importInput.placeholder = '.json 配置文件';
-  };
+  importRow.appendChild(importBtn);
+  importRow.appendChild(hiddenFile);
   applyRaw.style.marginTop = '0px';
   applyRaw.style.marginBottom = '4px';
   advCard.appendChild(applyRaw);
   advCard.appendChild(saveConfig);
-  advCard.appendChild(importInput);
+  advCard.appendChild(importRow);
   page.appendChild(advCard);
 }
 
@@ -743,6 +727,8 @@ function renderAbout() {
     { k: '监听端口', v: ':' + (info.port || '—'), cls: 'cyan', link: false },
     { k: '配置持久化', v: (STATE && STATE.persistence) ? '已启用' : '未启用', cls: '', link: false },
     { k: '配置文件', v: (STATE && STATE.configPath) || '—', cls: '', link: false },
+    { k: '项目主页', v: 'freeroute-android ↗', cls: 'blue', link: 'https://github.com/lopinnn56/freeroute-android' },
+    { k: '模型目录源', v: 'FreeLLMAPI ↗', cls: 'blue', link: 'https://github.com/tashfeenahmed/freellmapi' },
     { k: '上游插件', v: 'dsh-freeroute ↗', cls: 'blue', link: 'https://github.com/dushaobindoudou/dsh-freeroute' },
     { k: '界面参考', v: 'CLIProxyAPI ↗', cls: 'blue', link: 'https://github.com/liaoyh9422-creator/CLIProxyAPI' }
   ];
@@ -853,6 +839,82 @@ async function doHealthCheck() {
     const j = await res.json();
     toast('引擎正常 · ' + j.route + ' v' + j.version);
   } catch (e) { toast('引擎未响应: ' + e.message); }
+}
+
+// ---------- 配置备份（导出 / 恢复） ----------
+// 导出：把当前上游/模型配置 + 全部 API Key 打包为 freeroute-config.json 下载。
+async function doExportConfig(btn) {
+  const label = btn ? btn.textContent : '导出中…';
+  if (btn) btn.textContent = '导出中…';
+  try {
+    const r = await rpc('freeroute.config.export');
+    if (r && r.ok) {
+      const blob = new Blob([r.text], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'freeroute-config.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('配置已导出为 freeroute-config.json');
+    } else {
+      toast('导出失败: ' + ((r && r.error) || '未知'));
+    }
+  } catch (e) { toast(e.message); }
+  if (btn) btn.textContent = label;
+}
+// 恢复：读取选择文件，校验后整体覆盖配置与 Key。
+async function doImportConfig(file, onDone) {
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const r = await rpc('freeroute.config.import', { text: text });
+    if (r && r.ok) {
+      const c = r.counts || {};
+      toast('配置已恢复：' + (c.upstreams || 0) + ' 个上游，' + (c.keys || 0) + ' 把 Key');
+    } else {
+      toast('恢复失败: ' + ((r && r.error) || '未知'));
+    }
+  } catch (e) { toast(e.message); }
+  if (onDone) onDone();
+}
+// 生成「配置备份」卡片：包含 导出配置 / 恢复配置 按钮，服务页顶部最显眼。
+function buildConfigBackupCard() {
+  const card = el('div', 'card');
+  const h = el('div', 'row gap');
+  h.appendChild(el('div', 'card-title lg', '配置备份'));
+  h.appendChild(el('div', 'spacer'));
+  h.appendChild(el('div', 'badge green', '含 API Key'));
+  card.appendChild(h);
+  card.appendChild(el('div', 'up-note', '导出当前全部上游 / 模型 / 代理与 API Key 配置为 JSON 文件；换机或重装后可一键恢复。'));
+
+  const row = el('div', 'row gap');
+  row.style.marginTop = '6px';
+  const exportBtn = el('div', 'btn green r3 flex1', '导出配置');
+  exportBtn.onclick = () => doExportConfig(exportBtn);
+  const importWrap = el('div');
+  importWrap.style.flex = '1';
+  const importBtn = el('div', 'btn blue r3 flex1', '恢复配置');
+  importBtn.style.cursor = 'pointer';
+  const hiddenFile = el('input', '');
+  hiddenFile.type = 'file';
+  hiddenFile.accept = '.json';
+  hiddenFile.style.display = 'none';
+  importBtn.onclick = () => { try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); } };
+  hiddenFile.onchange = async function () {
+    const f = hiddenFile.files && hiddenFile.files[0];
+    hiddenFile.value = '';
+    if (f) {
+      importBtn.textContent = '恢复中…';
+      await doImportConfig(f, () => { importBtn.textContent = '恢复配置'; refreshState(); renderService(); renderAdvanced(); });
+    }
+  };
+  importWrap.appendChild(importBtn);
+  importWrap.appendChild(hiddenFile);
+  row.appendChild(exportBtn);
+  row.appendChild(importWrap);
+  card.appendChild(row);
+  return card;
 }
 
 // ---------- 启动 ----------
