@@ -4,8 +4,11 @@
 'use strict';
 
 // ---------- 引擎基址（同源，从当前路径推断） ----------
-const BASE = location.pathname.replace(/\/app\/.*$/, '') || '';
-const RPC_URL = BASE + '/freeroute/rpc';
+// 页面路径形如 /freeroute/app/...；把 /app/ 之后的部分剥掉即得到引擎挂载根，
+// 例如 /freeroute/app/ -> /freeroute。端点都直接挂在这根之下（/freeroute/rpc、
+// /freeroute/health），所以这里不再重复拼 /freeroute 前缀。
+const BASE = (location.pathname.replace(/\/app\/.*$/, '') || '').replace(/\/+$/, '');
+const RPC_URL = BASE + '/rpc';
 
 // ---------- 状态 ----------
 let STATE = null;            // freeroute.state 快照
@@ -779,7 +782,7 @@ async function doProbeAll() {
 }
 async function doHealthCheck() {
   try {
-    const res = await fetch(BASE + '/freeroute/health');
+    const res = await fetch(BASE + '/health');
     const j = await res.json();
     toast('引擎正常 · ' + j.route + ' v' + j.version);
   } catch (e) { toast('引擎未响应: ' + e.message); }
