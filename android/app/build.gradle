@@ -35,27 +35,20 @@ android {
     }
   }
 
-  // 稳定签名：CI 从仓库 secrets 注入固定 keystore（base64 + 密码），
-  // 保证每次构建产出的 APK 签名一致、可原地升级安装（无需卸载重装）。
-  // 未配置 secrets 时（如本地无签名环境）回退 debug 签名，构建不中断。
-  def keystoreB64 = System.getenv('ANDROID_KEYSTORE_BASE64')
-  def keystorePass = System.getenv('ANDROID_KEYSTORE_PASSWORD')
-  def keyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'freeroute'
-  def keyPass = System.getenv('ANDROID_KEY_PASSWORD')
+  // 稳定签名：CI 由 workflow 把 keystore 从 secrets 解码写入固定路径，
+  // 每次构建用同一把 key 签名，产出的 APK 可原地升级安装（无需卸载重装）。
+  // 未配置时（如本地无签名环境）回退 android 自带 debug 签名，构建不中断。
+  def storeFileEnv = System.getenv('ANDROID_KEYSTORE_FILE')
+  def storePassEnv = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+  def ksFileObj = (storeFileEnv && new File(storeFileEnv).isFile()) ? new File(storeFileEnv) : null
 
   signingConfigs {
     release {
-      if (keystoreB64 && keystorePass) {
-        def ksFile = file("${rootProject.buildDir}/release.keystore")
-        // 仅在文件不存在时写入一次（避免每次配置阶段重复写文件）
-        if (!ksFile.exists()) {
-          ksFile.parentFile.mkdirs()
-          ksFile.bytes = Base64.decoder.decode(keystoreB64)
-        }
-        storeFile ksFile
-        storePassword keystorePass
-        keyAlias keyAlias
-        keyPassword keyPass ?: keystorePass
+      if (ksFileObj != null && storePassEnv) {
+        storeFile ksFileObj
+        storePassword storePassEnv
+        keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'freeroute'
+        keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: storePassEnv
       }
     }
   }
@@ -64,7 +57,11 @@ android {
     release {
       minifyEnabled false
       shrinkResources false
-      signingConfig (keystoreB64 && keystorePass) ? signingConfigs.release : signingConfigs.debug
+      if (ksFileObj != null && storePassEnv) {
+        signingConfig signingConfigs.release
+      } else {
+        signingConfig signingConfigs.debug
+      }
     }
   }
 

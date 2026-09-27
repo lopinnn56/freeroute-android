@@ -83,10 +83,24 @@ jobs:
           # dummy-cleanup 构建，用到 Gradle 8.7 的只写属性 removeUnusedEntriesOlderThan，
           # 与 gradle/actions@v3 不兼容导致整个 run 被判红（构建本身其实已成功）。
 
+      - name: 还原签名 keystore（来自 secrets）
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            mkdir -p "$RUNNER_TEMP"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "keystore 已还原: $RUNNER_TEMP/release.keystore"
+            test -s "$RUNNER_TEMP/release.keystore"
+          else
+            echo "无 ANDROID_KEYSTORE_BASE64 —— 将回退 debug 签名"
+          fi
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
       - name: 构建 Release APK（固定签名）
         working-directory: android
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
