@@ -55,7 +55,7 @@ html, body {
   padding: 8px 12px 4px;
   overflow: hidden;
 }
-.page { display: none; flex-direction: column; height: 100%; min-height: 0; }
+.page { display: none; flex-direction: column; height: 100%; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .page.active { display: flex; }
 
 /* ---------- 卡片 ---------- */
