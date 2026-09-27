@@ -718,6 +718,11 @@ function renderLogLines() {
   if (!wrap) return;
   wrap.innerHTML = '';
   const lines = LOGS.slice(-600);
+  if (lines.length === 0) {
+    const empty = el('div', 'log-line info-b', '暂无日志。请求引擎后日志会显示在这里；可点上方「刷新」。');
+    wrap.appendChild(empty);
+    return;
+  }
   lines.forEach((line, i) => {
     const div = el('div', 'log-line ' + classifyLog(line, i));
     div.textContent = stripTs(line);

@@ -69,7 +69,7 @@ html, body {
 }
 .card:first-child { margin-top: 0; }
 .card.tight { padding: 6px 10px; }
-.card.flex { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.card.flex { flex: 1; min-height: 180px; display: flex; flex-direction: column; }
 .card.about { border-radius: 8px; padding: 4px 12px; }
 
 /* ---------- 区块标题 ---------- */
@@ -154,7 +154,7 @@ html, body {
 
 /* ---------- 日志控制台 ---------- */
 .log-wrap {
-  flex: 1; min-height: 0; background: var(--console);
+  flex: 1; min-height: 120px; background: var(--console);
   border-radius: 4px; overflow-y: auto; padding: 4px 6px;
   -webkit-overflow-scrolling: touch;
 }
@@ -213,7 +213,7 @@ textarea.input { resize: vertical; min-height: 56px; }
 .empty { font-size: 11px; color: var(--dim); padding: 8px 4px; line-height: 1.6; }
 
 /* ---------- 审计列表 ---------- */
-.audit-wrap { flex: 1; min-height: 0; background: var(--console); border-radius: 4px; overflow-y: auto; padding: 4px 6px; }
+.audit-wrap { flex: 1; min-height: 120px; background: var(--console); border-radius: 4px; overflow-y: auto; padding: 4px 6px; }
 .audit-row { display: flex; align-items: center; padding: 3px 2px; border-bottom: 1px solid #151B23; }
 .audit-row:last-child { border-bottom: none; }
 .audit-time { font-size: 9px; color: var(--dim); font-family: ui-monospace, Menlo, Consolas, monospace; }
