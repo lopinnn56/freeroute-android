@@ -381,7 +381,14 @@ function buildUpstreamCard(u) {
   arow.appendChild(testBtn); arow.appendChild(probeBtn);
   if (u.signupUrl) {
     const signup = el('div', 'btn blue-tint r3 sm flex1', '申请 Key');
-    signup.onclick = () => window.open(u.signupUrl, '_blank');
+    // 交给 Android 宿主拦截 freeroute://open → 用系统默认浏览器打开注册页
+    signup.onclick = () => {
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        location.href = 'freeroute://open?url=' + encodeURIComponent(u.signupUrl);
+      } else {
+        try { window.open(u.signupUrl, '_blank'); } catch (e) { toast('请复制链接到浏览器打开: ' + u.signupUrl); }
+      }
+    };
     arow.appendChild(signup);
   }
   const rm = el('div', 'btn red-solid r3 sm', '隐藏');
@@ -842,21 +849,19 @@ async function doHealthCheck() {
 }
 
 // ---------- 配置备份（导出 / 恢复） ----------
-// 导出：把当前上游/模型配置 + 全部 API Key 打包为 freeroute-config.json 下载。
+// 导出：跳转到引擎的 /freeroute/config/export 真实 HTTP 端点。
+// Android 宿主 DownloadListener 拦截后写入应用下载目录，并 Toast 提示
+// 完整保存路径；桌面浏览器则按附件下载。
 async function doExportConfig(btn) {
   const label = btn ? btn.textContent : '导出中…';
   if (btn) btn.textContent = '导出中…';
   try {
+    // 先探一下引擎是否可达（避免导出中没反应）
     const r = await rpc('freeroute.config.export');
     if (r && r.ok) {
-      const blob = new Blob([r.text], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'freeroute-config.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      toast('配置已导出为 freeroute-config.json');
+      location.href = BASE + '/config/export';
+      // 桌面浏览器 / WebView 未拦截时也会触发下载；这里给引导文案
+      toast('正在导出配置…保存位置以系统提示为准');
     } else {
       toast('导出失败: ' + ((r && r.error) || '未知'));
     }

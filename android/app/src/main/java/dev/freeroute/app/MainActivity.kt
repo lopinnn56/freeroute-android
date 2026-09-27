@@ -9,8 +9,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.text.method.ScrollingMovementMethod
@@ -20,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,6 +33,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import java.io.File
 
 /**
  * 宿主 Activity：一个全屏 WebView，指向引擎在本机监听的 /freeroute/app/。
@@ -90,6 +94,55 @@ class MainActivity : AppCompatActivity() {
       webViewClient = object : WebViewClient() {
         override fun onPageFinished(view: WebView?, url: String?) {
           if (url != null && url.contains("/freeroute/app")) showWeb()
+        }
+        // 「申请 Key」等外链：WebUI 用 freeroute://open?url=… 触发，
+        // 这里拦截后用系统默认浏览器打开（避免 WebView 内嵌外部网站）。
+        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+          val u = request?.url ?: return false
+          if (u.scheme == "freeroute" && u.host == "open") {
+            val target = u.getQueryParameter("url")
+            if (target != null && target.isNotEmpty()) {
+              try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+              } catch (e: Exception) {
+                Log.e(TAG, "无法打开外部浏览器: $target", e)
+              }
+            }
+            return true
+          }
+          return false
+        }
+      }
+      // 下载拦截：WebUI 的「导出配置」跳转到真实 HTTP URL（/freeroute/config/export），
+      // 这里拦截下载，写入应用专属下载目录，Toast 提示完整路径（用户可直接找到）。
+      web.setDownloadListener { url, _, _, _, _ ->
+        try {
+          val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "freeroute")
+          if (!dir.exists()) dir.mkdirs()
+          val fileName = if (url.contains("config/export")) "freeroute-config.json"
+            else Uri.parse(url).lastPathSegment?.takeLast(60) ?: ("freeroute-" + System.currentTimeMillis() + ".json")
+          val dest = File(dir, fileName)
+          // 后台线程拉取并落盘
+          Thread {
+            try {
+              val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection)
+              conn.connectTimeout = 10000
+              conn.readTimeout = 30000
+              conn.inputStream.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+              }
+              runOnUiThread {
+                Toast.makeText(this, "已保存: ${dest.absolutePath}", Toast.LENGTH_LONG).show()
+                Log.i(TAG, "配置导出完成: ${dest.absolutePath}")
+              }
+            } catch (e: Exception) {
+              Log.e(TAG, "配置导出下载失败: $url", e)
+            }
+          }.start()
+        } catch (e: Exception) {
+          Log.e(TAG, "下载拦截失败: $url", e)
         }
       }
       webChromeClient = object : WebChromeClient() {

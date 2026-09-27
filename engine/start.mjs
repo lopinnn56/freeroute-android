@@ -221,7 +221,35 @@ function uiHandler(req, res) {
   })
 }
 
+// ---------- 5.5 配置导出 HTTP 端点 ----------
+// WebUI「导出配置」跳转到此真实 HTTP URL，触发 Android 宿主 DownloadListener
+// 把 JSON 写入用户可见目录并 Toast 提示完整路径（不再用 Blob 下载）。
+function configExportHandler(req, res) {
+  Promise.resolve().then(async function () {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'content-type': 'text/plain' }); res.end('method not allowed'); return
+    }
+    const handler = rpc.get('freeroute.config.export')
+    if (!handler) { res.writeHead(500, { 'content-type': 'text/plain' }); res.end('config export unavailable'); return }
+    const result = await handler({})
+    if (!result || !result.ok) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify(result || { ok: false, error: '导出失败' }))
+      return
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': 'attachment; filename="freeroute-config.json"',
+      'access-control-allow-origin': '*'
+    })
+    res.end(result.text)
+  }).catch(function (e) {
+    try { res.writeHead(500, { 'content-type': 'text/plain' }); res.end(String((e && e.message) || e)) } catch (e2) { }
+  })
+}
+
 webServerShim.register({ kind: 'prefix', path: '/freeroute/rpc', handler: rpcHandler })
+webServerShim.register({ kind: 'prefix', path: '/freeroute/config/export', handler: configExportHandler })
 webServerShim.register({ kind: 'prefix', path: '/freeroute/app', handler: uiHandler })
 
 /** 启动引擎，返回实际监听端口 */
