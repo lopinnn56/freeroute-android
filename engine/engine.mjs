@@ -15,6 +15,67 @@ const NS = 'free-proxy'
 const UA = 'deepseek-harness/0.1.0-rc.6 (+https://github.com/deepseek-ai/deepseek-harness)'
 const TRAILER = '\n__FREEROUTE_HTTP_%{http_code}__'
 
+// FreeLLMAPI（https://github.com/tashfeenahmed/freellmapi）公开目录同步用。
+// 其目录 feed（api.freellmapi.co/v1/latest，无需鉴权）返回「平台 id + 模型」，
+// 但**不含 baseUrl**——baseUrl 定义在各平台适配器源码里。这里内置一份从
+// FreeLLMAPI providers 源码提取的 platform -> {name, baseUrl} 映射，供
+// syncFreellmapi() 把该目录转成 FreeRoute 上游条目。keyless 表示免鉴权上游。
+const FREELLMAPI_BASE_URLS = {
+  agnes: { name: 'Agnes AI', baseUrl: 'https://apihub.agnes-ai.com/v1' },
+  aihorde: { name: 'AI Horde', baseUrl: 'https://oai.aihorde.net/v1', keyless: true },
+  aion: { name: 'Aion Labs', baseUrl: 'https://api.aionlabs.ai/v1' },
+  aclide: { name: 'Aclide', baseUrl: 'https://aclide.com/v1' },
+  airforce: { name: 'Api.Airforce', baseUrl: 'https://api.airforce/v1' },
+  ainative: { name: 'AINative Studio', baseUrl: 'https://api.ainative.studio/api/v1' },
+  anyapi: { name: 'AnyAPI', baseUrl: 'https://api.anyapi.ai/v1' },
+  bai: { name: 'B.AI', baseUrl: 'https://api.b.ai/v1' },
+  bazaarlink: { name: 'BazaarLink', baseUrl: 'https://bazaarlink.ai/api/v1' },
+  blaze: { name: 'BlazeAPI', baseUrl: 'https://api.blazeapi.org/paid/v1' },
+  cerebras: { name: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1' },
+  clod: { name: 'CLōD', baseUrl: 'https://api.clod.io/v1' },
+  cloudflare: { name: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1' },
+  cohere: { name: 'Cohere', baseUrl: 'https://api.cohere.ai/compatibility/v1' },
+  dreamprompting: { name: 'DreamPrompting', baseUrl: 'https://dreamprompting.com/api/v1' },
+  electronhub: { name: 'ElectronHub', baseUrl: 'https://api.electronhub.ai/v1' },
+  experiential: { name: 'Experiential', baseUrl: 'https://api.experientiallabs.ai/v1' },
+  github: { name: 'GitHub Models', baseUrl: 'https://models.github.ai/inference' },
+  google: { name: 'Google AI Studio', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
+  groq: { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1' },
+  huggingface: { name: 'HuggingFace Router', baseUrl: 'https://router.huggingface.co/v1' },
+  kilo: { name: 'Kilo Gateway', baseUrl: 'https://api.kilo.ai/api/gateway/v1', keyless: true },
+  llm7: { name: 'LLM7', baseUrl: 'https://api.llm7.io/v1' },
+  logfare: { name: 'Logfare', baseUrl: 'https://logfare.ai/v1' },
+  longcat: { name: 'LongCat', baseUrl: 'https://api.longcat.chat/openai/v1' },
+  lucidity: { name: 'Lucidity Composite', baseUrl: 'https://composite.lucidity.sh/v1' },
+  mistral: { name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1' },
+  modelscope: { name: 'ModelScope', baseUrl: 'https://api-inference.modelscope.cn/v1' },
+  moondream: { name: 'Moondream', baseUrl: 'https://api.moondream.ai/v1' },
+  nara: { name: 'NaraRouter', baseUrl: 'https://router.bynara.id/v1' },
+  nvidia: { name: 'NVIDIA NIM', baseUrl: 'https://integrate.api.nvidia.com/v1' },
+  ollama: { name: 'Ollama Cloud', baseUrl: 'https://ollama.com/v1' },
+  opencode: { name: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1' },
+  openrouter: { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
+  orcarouter: { name: 'OrcaRouter', baseUrl: 'https://api.orcarouter.ai/v1' },
+  ovh: { name: 'OVH AI Endpoints', baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', keyless: true },
+  pollinations: { name: 'Pollinations', baseUrl: 'https://gen.pollinations.ai/v1' },
+  qianfan: { name: 'Baidu Qianfan', baseUrl: 'https://qianfan.baidubce.com/v2' },
+  radeon: { name: 'AMD Radeon Cloud', baseUrl: 'https://developer.amd.com.cn/radeon/api/v1' },
+  reka: { name: 'Reka', baseUrl: 'https://api.reka.ai/v1' },
+  requesty: { name: 'Requesty', baseUrl: 'https://router.requesty.ai/v1' },
+  router9: { name: 'Router9', baseUrl: 'https://api.router9.com/v1' },
+  sail: { name: 'Sail Research', baseUrl: 'https://api.sailresearch.com/v1' },
+  sealion: { name: 'SEA-LION', baseUrl: 'https://api.sea-lion.ai/v1' },
+  septor: { name: 'Septor Labs', baseUrl: 'https://api.septorlabs.com/v1' },
+  siliconflow: { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.com/v1' },
+  speka: { name: 'Speka', baseUrl: 'https://speka.me/v1' },
+  unorouter: { name: 'UnoRouter', baseUrl: 'https://api.unorouter.com/v1' },
+  volcengine: { name: 'Volcengine Ark', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  waterfall: { name: 'Waterfall', baseUrl: 'https://api.getwaterfall.org/v1' },
+  xfyun: { name: 'iFlytek Spark', baseUrl: 'https://spark-api-open.xf-yun.com/v1' },
+  xkiro: { name: 'xKiro', baseUrl: 'https://api.xkiro.com/v1' },
+  zhipu: { name: 'Z.ai (Zhipu)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' }
+}
+
 // 内置三上游：目录默认收录各家免费模型；配好 Key 后插件还会探测
 // GET <baseUrl>/models 合并出完整可用模型列表（见 probeModels）。
 // 种子表口径：2026-09-11 live 核对（GET /models 公开可探，无需 Key）。
@@ -1867,6 +1928,10 @@ function log (message) {
           }
           let dropped = 0
           for (const id of Array.from(remoteUpstreams.keys())) {
+            // 跳过 FreeLLMAPI 目录注入的条目：它们归 syncFreellmapi 管，
+            // 普通目录同步不删除（避免两套目录互相清空）。
+            const cur = remoteUpstreams.get(id)
+            if (cur && cur.freellmapi === true) continue
             if (!nextIds.has(id)) { remoteUpstreams.delete(id); dropped += 1 }
           }
           // 目录自带 apikey 列表 -> 整环写入凭据（KEY / KEY_2 …，多余旧编号清掉）
@@ -1902,6 +1967,87 @@ function log (message) {
       }
       catalogMeta.lastError = lastErr || '未配置远程目录 URL'
       return { ok: false, error: catalogMeta.lastError }
+    }
+
+    // FreeLLMAPI 目录同步：拉取 api.freellmapi.co/v1/latest（公开、免鉴权）的
+    // 免费模型提供商列表，结合内置 baseUrl 映射表转成 FreeRoute 上游条目，
+    // 增量合并进 remoteUpstreams。与 syncCatalog 互不干扰——只新增/更新
+    // freellmapi 相关的平台条目，绝不删除其它来源的上游。
+    // 返回 { ok, count, added, changed, skipped, platforms:[...] }。
+    async function syncFreellmapi() {
+      const URL = 'https://api.freellmapi.co/v1/latest'
+      let body = ''
+      try {
+        const r = await rawGet(URL, 30000)
+        if (r.status !== 0 && (r.status < 200 || r.status >= 300)) throw mkFail('FreeLLMAPI 目录下载失败 HTTP ' + r.status + (r.errTail ? ' · ' + r.errTail : ''), 'HTTP_' + r.status)
+        body = r.body
+      } catch (e) { return { ok: false, error: emsg(e) } }
+
+      let data
+      try { data = JSON.parse(body) } catch (e) { return { ok: false, error: 'FreeLLMAPI 目录 JSON 解析失败: ' + emsg(e) } }
+      const platforms = Array.isArray(data && data.platforms) ? data.platforms : []
+      const models = Array.isArray(data && data.models) ? data.models : []
+      if (platforms.length === 0) return { ok: false, error: 'FreeLLMAPI 目录为空（未返回平台列表）' }
+
+      // 平台 id -> 免费模型（按 contextWindow 降序，截断到 24）
+      const byPlatform = new Map()
+      for (const m of models) {
+        if (!m || typeof m !== 'object') continue
+        const pid = m.platform
+        const mid = typeof m.modelId === 'string' && m.modelId.length > 0 ? m.modelId : null
+        if (!pid || !mid) continue
+        if (m.enabled === false) continue
+        let list = byPlatform.get(pid)
+        if (!list) { list = []; byPlatform.set(pid, list) }
+        if (list.length >= 24) continue
+        list.push({
+          id: mid,
+          name: (typeof m.displayName === 'string' && m.displayName.length > 0) ? m.displayName : mid,
+          contextWindow: Number(m.contextWindow) > 0 ? Number(m.contextWindow) : 32768,
+          vision: m.supportsVision === true
+        })
+      }
+      for (const list of byPlatform.values()) list.sort(function (a, b) { return b.contextWindow - a.contextWindow })
+
+      const platformName = new Map()
+      for (const p of platforms) if (p && p.id) platformName.set(p.id, typeof p.name === 'string' && p.name.length > 0 ? p.name : p.id)
+
+      let added = 0
+      let changed = 0
+      let skipped = 0
+      const synced = []
+      // 已有 id 集：内置上游 + 远程目录已有条目（不含 freellmapi 自身的，
+      // 允许 freellmapi 更新自己的条目）。冲突 id 一律跳过，绝不覆盖
+      // freeroute 内置/默认目录的 baseUrl 与模型列表；只新增 freellmapi
+      // 独有的平台，或更新/freellmapi 已同步的条目。
+      const existing = new Set()
+      for (const b of BUILTIN_UPSTREAMS) existing.add(b.id)
+      for (const rp of Array.from(remoteUpstreams.entries())) if (rp[1].freellmapi !== true) existing.add(rp[0])
+      for (const pid of Array.from(byPlatform.keys())) {
+        const info = FREELLMAPI_BASE_URLS[pid]
+        if (!info || !info.baseUrl) { skipped += 1; continue }
+        if (existing.has(pid)) { skipped += 1; continue }
+        const list = byPlatform.get(pid)
+        const name = info.name || platformName.get(pid) || pid
+        const entry = {
+          id: pid,
+          name: name,
+          baseUrl: info.baseUrl,
+          keyRef: 'FREEROUTE_' + pid.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_KEY',
+          noAuth: info.keyless === true,
+          freellmapi: true,
+          note: '来自 FreeLLMAPI 目录',
+          freeModels: list.map(function (m) { return m.id }),
+          defaultModel: list.length > 0 ? list[0].id : '',
+          models: list
+        }
+        const prev = remoteUpstreams.get(pid)
+        if (prev === undefined) { remoteUpstreams.set(pid, entry); added += 1 }
+        else if (JSON.stringify(prev) !== JSON.stringify(entry)) { remoteUpstreams.set(pid, entry); changed += 1 }
+        synced.push({ id: pid, name: name, free: list.length })
+      }
+      log('[freeroute] FreeLLMAPI 同步完成：+新增 ' + added + '，更新 ' + changed + '，跳过 ' + skipped)
+      return { ok: true, count: synced.length, added: added, changed: changed, skipped: skipped, platforms: synced }
     }
 
     async function anyReadyUpstream() {
@@ -2389,6 +2535,7 @@ function log (message) {
       } catch (e) { return { ok: false, error: emsg(e) } }
     }
     rpc['freeroute.catalog.sync'] = async function () { return syncCatalog() }
+    rpc['freeroute.freellmapi.sync'] = async function () { return syncFreellmapi() }
     rpc['freeroute.probe'] = async function (args) {
       const id = args && args.id
       const targets = id

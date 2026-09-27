@@ -150,13 +150,16 @@ function renderService() {
   r3.style.marginTop = '8px';
   const btnSync = el('div', 'btn cyan r3 flex1', '同步目录');
   btnSync.onclick = doCatalogSync;
+  const btnFreellmapi = el('div', 'btn blue r3 flex1', '同步FreeLLMAPI');
+  btnFreellmapi.style.marginLeft = '5px';
+  btnFreellmapi.onclick = doFreellmapiSync;
   const btnProbe = el('div', 'btn blue r3 flex1', '探测模型');
   btnProbe.style.marginLeft = '5px';
   btnProbe.onclick = doProbeAll;
   const btnTest = el('div', 'btn neutral r3 flex1', '检查');
   btnTest.style.marginLeft = '5px';
   btnTest.onclick = doHealthCheck;
-  r3.appendChild(btnSync); r3.appendChild(btnProbe); r3.appendChild(btnTest);
+  r3.appendChild(btnSync); r3.appendChild(btnFreellmapi); r3.appendChild(btnProbe); r3.appendChild(btnTest);
   hero.appendChild(r3);
   page.appendChild(hero);
 
@@ -772,6 +775,15 @@ async function doCatalogSync() {
   try {
     const r = await rpc('catalogSync');
     if (r && r.ok) toast('目录已同步：' + r.count + ' 条（新增 ' + (r.added || 0) + '）');
+    else toast('同步失败: ' + ((r && r.error) || '未知'));
+    refreshState();
+  } catch (e) { toast(e.message); }
+}
+async function doFreellmapiSync() {
+  toast('正在同步 FreeLLMAPI 提供商…');
+  try {
+    const r = await rpc('freellmapiSync');
+    if (r && r.ok) toast('已同步 FreeLLMAPI：' + r.count + ' 家提供商（新增 ' + (r.added || 0) + '）');
     else toast('同步失败: ' + ((r && r.error) || '未知'));
     refreshState();
   } catch (e) { toast(e.message); }
