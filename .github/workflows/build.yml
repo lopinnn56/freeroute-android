@@ -83,14 +83,25 @@ jobs:
           # dummy-cleanup 构建，用到 Gradle 8.7 的只写属性 removeUnusedEntriesOlderThan，
           # 与 gradle/actions@v3 不兼容导致整个 run 被判红（构建本身其实已成功）。
 
-      - name: 构建 Release APK
+      - name: 构建 Release APK（固定签名）
         working-directory: android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: 收集产物
+      - name: 收集产物（带版本号命名）
         run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./engine/package.json').version" 2>/dev/null || echo "0.0.0")
+          SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
           mkdir -p out
-          find android/app/build/outputs/apk -name '*.apk' -exec cp {} out/ \;
+          for f in android/app/build/outputs/apk/release/*.apk; do
+            NAME="freeroute-v${VERSION}-${SHA}.apk"
+            cp -v "$f" "out/$NAME"
+          done
           ls -lh out/
 
       - uses: actions/upload-artifact@v4
@@ -98,6 +109,28 @@ jobs:
           name: freeroute-apk
           path: out/*.apk
           if-no-files-found: error
+
+      - name: 发布到 Releases（每次 main 推送/手动构建）
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./engine/package.json').version" 2>/dev/null || echo "0.0.0")
+          SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          APK=$(ls out/freeroute-*.apk | head -1)
+          TAG="continuous-latest"
+          # 用 gh CLI 创建/更新持续构建 release，并覆盖同名资产
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "更新既有 release: $TAG"
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            echo "创建新 release: $TAG"
+            gh release create "$TAG" "$APK" \
+              --title "FreeRoute 持续构建 v${VERSION} (${SHA})" \
+              --notes "自动构建：v${VERSION} @ ${SHA} · ${GITHUB_RUN_ID}" || true
+          fi
+          gh release view "$TAG" --json tagName,name,assets --jq '.assets[] | .name' | sed 's/^/已上传到 Release: /'
 
       - name: 附加到 Release（打 tag 时）
         if: startsWith(github.ref, 'refs/tags/v')

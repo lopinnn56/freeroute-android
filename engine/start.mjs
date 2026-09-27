@@ -121,6 +121,8 @@ const RPC_METHOD_ALIAS = {
   restoreUpstream: 'freeroute.restore-upstream',
   catalogSync: 'freeroute.catalog.sync',
   freellmapiSync: 'freeroute.freellmapi.sync',
+  configExport: 'freeroute.config.export',
+  configImport: 'freeroute.config.import',
   probe: 'freeroute.probe',
   test: 'freeroute.test',
   setDefault: 'freeroute.set-default',

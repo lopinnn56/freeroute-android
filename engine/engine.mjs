@@ -2287,6 +2287,108 @@ function log (message) {
     }
 
     const rpc = {}
+    // ---- 配置导出 / 导入 ----
+    // 导出：把 userConfig（顺序/启停/隐藏/自定义上游/代理/目录/接管）与全部
+    // 上游 Key 凭据一起序列化，返回可下载的 JSON 文本。导入：反序列化并整体
+    // 覆盖（先清后写：旧 order/upstreams 先删除再写回，凭据整环重建），保证
+    // 与导出文件完全对等。
+    async function collectKeys() {
+      const out = {}
+      if (credentials === undefined) return out
+      for (const u of orderedUpstreams()) {
+        const ring = []
+        for (const ref of keyRefsFor(u)) {
+          try {
+            const d = await credentials.describe(ref)
+            if (d && d.configured && typeof ref === 'string') {
+              const raw = await credentials.resolve(ref)
+              if (raw && typeof raw.value === 'string' && raw.value.length > 0) ring.push(raw.value.trim())
+            }
+          } catch (e) { }
+        }
+        if (ring.length > 0) out[u.id] = ring
+      }
+      return out
+    }
+    async function replaceKeys(keys) {
+      if (credentials === undefined || !keys || typeof keys !== 'object') return 0
+      let imported = 0
+      for (const pair of Object.entries(keys)) {
+        const id = pair[0]
+        const list = Array.isArray(pair[1]) ? pair[1] : (typeof pair[1] === 'string' ? String(pair[1]).split(/[\n,;]+/) : [])
+        const cleaned = list.map(function (x) { return String(x).trim() }).filter(function (x) { return x.length > 0 }).slice(0, 8)
+        if (cleaned.length === 0) continue
+        const up = orderedUpstreams().find(function (u) { return u.id === id })
+        if (!up) continue
+        const refs = keyRefsFor(up)
+        for (let i = 0; i < refs.length; i++) {
+          try {
+            if (i < cleaned.length) { await credentials.set(refs[i], cleaned[i]); }
+            else { await credentials.unset(refs[i]) }
+          } catch (e) { }
+        }
+        imported += cleaned.length
+      }
+      return imported
+    }
+    function clearAllKeys() {
+      // 导入是整体替换：先清掉所有上游现有 Key，再由 replaceKeys 重建。
+      // 失败不阻断（能清多少算多少）。
+      return (async function () {
+        if (credentials === undefined) return
+        for (const u of orderedUpstreams()) {
+          for (const ref of keyRefsFor(u)) { try { await credentials.unset(ref) } catch (e) { } }
+        }
+      })()
+    }
+    rpc['freeroute.config.export'] = async function () {
+      try {
+        const cfg = JSON.parse(JSON.stringify(userConfig))
+        let keys = {}
+        try { keys = await collectKeys() } catch (e) { }
+        const payload = {
+          $schema: 'freeroute-config-v1',
+          exportedAt: new Date().toISOString(),
+          version: VERSION,
+          config: cfg,
+          keys: keys
+        }
+        return { ok: true, text: JSON.stringify(payload, null, 2) }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+    rpc['freeroute.config.import'] = async function (args) {
+      try {
+        const text = args && typeof args.text === 'string' ? args.text : ''
+        if (!text.trim()) return { ok: false, error: '导入内容为空' }
+        let data
+        try { data = JSON.parse(text) } catch (e) { return { ok: false, error: 'JSON 解析失败: ' + emsg(e) } }
+        if (!data || typeof data !== 'object') return { ok: false, error: '配置格式无效' }
+        // 兼容两种形状：整体导出包（$schema）或裸 userConfig。
+        let cfg = data
+        let keys = null
+        if (data.$schema === 'freeroute-config-v1' || data.config) {
+          cfg = data.config || {}
+          keys = data.keys && typeof data.keys === 'object' ? data.keys : null
+        }
+        const clean = sanitizeConfig(cfg)
+        // 校验敏感字段形状（防御：baseUrl/chatPath 等必须符合 schema，否则拒绝）
+        const check = validatePatch({ order: clean.order, upstreams: clean.upstreams, catalog: clean.catalog, autoTakeover: clean.autoTakeover, proxy: clean.proxy })
+        // 空 order 是合法的（空配置），其余键直接透传校验
+        if (check && !/^patch 需为对象$/.test(check)) return { ok: false, error: '导入配置校验失败: ' + check }
+        if (configFileOk) {
+          userConfig = sanitizeConfig(JSON.parse(JSON.stringify(clean)))
+          writeConfigFile()
+        } else {
+          await requireSettings().update(NS, JSON.parse(JSON.stringify(clean)))
+        }
+        if (keys) {
+          await clearAllKeys()
+          await replaceKeys(keys)
+          await checkTakeover().catch(function () { })
+        }
+        return { ok: true, counts: { order: clean.order.length, upstreams: Object.keys(clean.upstreams || {}).length, keys: keys ? Object.keys(keys).length : 0 } }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
     rpc['freeroute.state'] = async function () { return buildState() }
     rpc['freeroute.set-key'] = async function (args) {
       if (credentials === undefined) return { ok: false, error: 'credentials 服务不可用' }

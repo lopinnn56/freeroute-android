@@ -585,7 +585,57 @@ function renderAdvanced() {
     try { await rpc('applyPatch', { patch: patch }); toast('配置已应用'); refreshState(); }
     catch (e) { toast(e.message); }
   };
+  const saveConfig = el('div', 'btn green r3', '导出配置');
+  saveConfig.style.marginTop = '6px';
+  saveConfig.onclick = async () => {
+    saveConfig.textContent = '导出中…';
+    try {
+      const r = await rpc('freeroute.config.export');
+      if (r && r.ok) {
+        const blob = new Blob([r.text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'freeroute-config.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('配置已导出为 freeroute-config.json');
+      } else {
+        toast('导出失败: ' + ((r && r.error) || '未知'));
+      }
+    } catch (e) { toast(e.message); }
+    saveConfig.textContent = '导出配置';
+  };
+  const importInput = el('input', 'input');
+  importInput.type = 'file';
+  importInput.accept = '.json';
+  importInput.style.marginTop = '6px';
+  importInput.onchange = async function () {
+    const file = importInput.files[0];
+    if (!file) return;
+    importInput.value = ''; // reset for same file re-select
+    const text = await file.text();
+    importInput.disabled = true;
+    importInput.placeholder = '导入中…';
+    try {
+      const r = await rpc('freeroute.config.import', { text: text });
+      if (r && r.ok) {
+        const c = r.counts || {};
+        toast(`配置已导入：upstreams=${c.upstreams || 0}, keys=${c.keys || 0}`);
+        // 重新读取以显示最新配置
+        if (ta) ta.value = JSON.stringify({ order: (STATE || {}).upstreams || {}, upstreams: {}, proxy: (ENGINE || {}).globalProxy || '' }, null, 2);
+      } else {
+        toast('导入失败: ' + ((r && r.error) || '未知'));
+      }
+    } catch (e) { toast(e.message); }
+    importInput.disabled = false;
+    importInput.placeholder = '.json 配置文件';
+  };
+  applyRaw.style.marginTop = '0px';
+  applyRaw.style.marginBottom = '4px';
   advCard.appendChild(applyRaw);
+  advCard.appendChild(saveConfig);
+  advCard.appendChild(importInput);
   page.appendChild(advCard);
 }
 

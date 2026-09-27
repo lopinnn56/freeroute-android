@@ -35,12 +35,36 @@ android {
     }
   }
 
+  // 稳定签名：CI 从仓库 secrets 注入固定 keystore（base64 + 密码），
+  // 保证每次构建产出的 APK 签名一致、可原地升级安装（无需卸载重装）。
+  // 未配置 secrets 时（如本地无签名环境）回退 debug 签名，构建不中断。
+  def keystoreB64 = System.getenv('ANDROID_KEYSTORE_BASE64')
+  def keystorePass = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+  def keyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'freeroute'
+  def keyPass = System.getenv('ANDROID_KEY_PASSWORD')
+
+  signingConfigs {
+    release {
+      if (keystoreB64 && keystorePass) {
+        def ksFile = file("${rootProject.buildDir}/release.keystore")
+        // 仅在文件不存在时写入一次（避免每次配置阶段重复写文件）
+        if (!ksFile.exists()) {
+          ksFile.parentFile.mkdirs()
+          ksFile.bytes = Base64.decoder.decode(keystoreB64)
+        }
+        storeFile ksFile
+        storePassword keystorePass
+        keyAlias keyAlias
+        keyPassword keyPass ?: keystorePass
+      }
+    }
+  }
+
   buildTypes {
     release {
       minifyEnabled false
       shrinkResources false
-      // 便于直接安装测试；正式分发应改用自有签名
-      signingConfig signingConfigs.debug
+      signingConfig (keystoreB64 && keystorePass) ? signingConfigs.release : signingConfigs.debug
     }
   }
 
