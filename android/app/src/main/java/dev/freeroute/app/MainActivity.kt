@@ -115,43 +115,44 @@ class MainActivity : AppCompatActivity() {
           return false
         }
       }
-      // 下载拦截：WebUI 的「导出配置」跳转到真实 HTTP URL（/freeroute/config/export），
-      // 这里拦截下载，写入应用专属下载目录，Toast 提示完整路径（用户可直接找到）。
-      web.setDownloadListener { url, _, _, _, _ ->
-        try {
-          val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "freeroute")
-          if (!dir.exists()) dir.mkdirs()
-          val fileName = if (url.contains("config/export")) "freeroute-config.json"
-            else Uri.parse(url).lastPathSegment?.takeLast(60) ?: ("freeroute-" + System.currentTimeMillis() + ".json")
-          val dest = File(dir, fileName)
-          // 后台线程拉取并落盘
-          Thread {
-            try {
-              val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection)
-              conn.connectTimeout = 10000
-              conn.readTimeout = 30000
-              conn.inputStream.use { input ->
-                dest.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
-              }
-              runOnUiThread {
-                Toast.makeText(this, "已保存: ${dest.absolutePath}", Toast.LENGTH_LONG).show()
-                Log.i(TAG, "配置导出完成: ${dest.absolutePath}")
-              }
-            } catch (e: Exception) {
-              Log.e(TAG, "配置导出下载失败: $url", e)
+    }
+    // 下载拦截：WebUI 的「导出配置」跳转到真实 HTTP URL（/freeroute/config/export），
+    // 这里拦截下载，写入应用专属下载目录，Toast 提示完整路径（用户可直接找到）。
+    // this 在这里指 MainActivity（onCreate 作用域）。
+    web.setDownloadListener { url, _, _, _, _ ->
+      try {
+        val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "freeroute")
+        if (!dir.exists()) dir.mkdirs()
+        val fileName = if (url.contains("config/export")) "freeroute-config.json"
+          else Uri.parse(url).lastPathSegment?.takeLast(60) ?: ("freeroute-" + System.currentTimeMillis() + ".json")
+        val dest = File(dir, fileName)
+        // 后台线程拉取并落盘
+        Thread {
+          try {
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection)
+            conn.connectTimeout = 10000
+            conn.readTimeout = 30000
+            conn.inputStream.use { input ->
+              dest.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
             }
-          }.start()
-        } catch (e: Exception) {
-          Log.e(TAG, "下载拦截失败: $url", e)
-        }
+            runOnUiThread {
+              Toast.makeText(this@MainActivity, "已保存: ${dest.absolutePath}", Toast.LENGTH_LONG).show()
+              Log.i(TAG, "配置导出完成: ${dest.absolutePath}")
+            }
+          } catch (e: Exception) {
+            Log.e(TAG, "配置导出下载失败: $url", e)
+          }
+        }.start()
+      } catch (e: Exception) {
+        Log.e(TAG, "下载拦截失败: $url", e)
       }
-      webChromeClient = object : WebChromeClient() {
+    }
+    web.webChromeClient = object : WebChromeClient() {
         override fun onConsoleMessage(m: ConsoleMessage): Boolean {
           Log.d(TAG, "webui: ${m.message()} @${m.lineNumber()}")
           return true
         }
       }
-    }
 
     splash = buildSplash()
     root.addView(web)
