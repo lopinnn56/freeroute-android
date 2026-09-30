@@ -2920,6 +2920,327 @@ function log (message) {
       oauthPending.delete(id)
       return { ok: true }
     }
+
+    // ---- CodeBuddy 运维域（来自 workbuddy2api-panel）----
+    // 域划分（与官方客户端一致）：
+    //   billing（签到/余额/试用）: CN www.codebuddy.cn · global www.workbuddy.ai
+    //   growth（成长任务/连登/旅行）: chatBase（copilot.tencent.com / workbuddy.ai）
+    // 认证：Bearer accessToken + X-User-Id（UID 可选，服务端按 token 识别）。
+    const CB_REALM = {
+      cn: { billing: 'https://www.codebuddy.cn', chat: 'https://copilot.tencent.com' },
+      global: { billing: 'https://www.workbuddy.ai', chat: 'https://www.workbuddy.ai' }
+    }
+    const CB_PATHS = {
+      billingMeter: ['/billing/meter/get-user-resource', '/v2/billing/meter/get-user-resource'],
+      dailyCheckin: ['/billing/meter/daily-checkin', '/v2/billing/meter/daily-checkin'],
+      report: '/v2/report',
+      tasksList: '/v2/activity/growth/tasks',
+      tasksAccept: '/v2/activity/growth/tasks/accept',
+      taskClaim: '/activity/growth/tasks/', // + taskCode + /claim
+      streak: '/activity/growth/streak',
+      streakRedeem: '/activity/growth/redeem',
+      lotterySummary: '/activity/growth/lottery/summary',
+      lotteryDraw: '/activity/growth/lottery/draw',
+      travelStatus: '/activity/growth/buddy/travel/status',
+      travelDepart: '/activity/growth/buddy/travel/depart',
+      travelClaim: '/activity/growth/buddy/travel/claim',
+      trial: '/billing/ide/trial'
+    }
+
+    /** 读取某上游所有已配置的 CodeBuddy JSON 凭据（含 Key 槽位下标）。 */
+    async function codebuddyCreds(up) {
+      const out = []
+      if (credentials === undefined) return out
+      for (const ref of keyRefsFor(up)) {
+        try {
+          const d = await credentials.describe(ref)
+          if (!d || !d.configured) continue
+          const raw = await credentials.resolve(ref)
+          if (!raw || typeof raw.value !== 'string') continue
+          const v = raw.value.trim()
+          if (v.startsWith('{')) {
+            try {
+              const cred = JSON.parse(v)
+              if (cred && cred.v === 1 && cred.at) out.push({ ref: ref, cred: cred })
+            } catch (e) { }
+          } else if (v) {
+            // 旧格式裸 token：合成最小凭据（无 rt，不支持刷新）
+            out.push({ ref: ref, cred: { v: 1, at: v, rt: '', exp: 0, iat: 0, domain: '', nickname: '' } })
+          }
+        } catch (e) { }
+      }
+      return out
+    }
+
+    /** CodeBuddy 运维请求：realm 自动判定（凭据 domain 或配置），双路径 billing fallback。 */
+    async function cbOpsRequest(cred, realm, base, path, method, body, extraHeaders) {
+      const p = OAUTH_PROVIDERS[realm === 'global' ? 'codebuddy-en' : 'codebuddy']
+      const url = base + path
+      const headers = Object.assign({
+        accept: 'application/json',
+        'content-type': 'application/json',
+        authorization: 'Bearer ' + cred.at,
+        'accept-language': realm === 'global' ? 'en-US,en' : 'zh-CN,zh'
+      }, p.baseHeaders, extraHeaders || {})
+      if (cred.nickname) { /* X-User-Id 无法可靠携带（uid 未存），服务端按 token 识别 */ }
+      const r = await oauthHttpRequest(method, url, headers, body ? JSON.stringify(body) : null)
+      let j = null
+      try { j = JSON.parse(r.body) } catch (e) { }
+      return { status: r.status, body: r.body, json: j }
+    }
+
+    /** billing 双路径请求（global 首选无 /v2，404 回退带 /v2；CN 单路径有 /v2）。 */
+    async function cbBillingMeter(cred, realm, paths, method, body) {
+      const bases = [CB_REALM[realm].billing]
+      let last = null
+      for (const base of bases) {
+        for (const path of paths) {
+          const r = await cbOpsRequest(cred, realm, base, path, method, body)
+          if (r.status === 200 && r.json && r.json.code === 0) return r
+          last = r
+          if (r.status !== 404) return r
+        }
+      }
+      return last
+    }
+
+    /** 解析某上游账号的 realm（凭据 domain 含 workbuddy.ai = global）。 */
+    function credRealm(cred) {
+      return (cred.domain || '').indexOf('workbuddy.ai') >= 0 ? 'global' : 'cn'
+    }
+
+    // RPC：每日签到（对全部账号逐个执行，幂等处理“已签到”）
+    rpc['freeroute.cb.checkin'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持签到' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const results = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const r = await cbBillingMeter(cred, realm, CB_PATHS.dailyCheckin, 'POST', {})
+          const msg = r.json && (r.json.msg || (r.json.data && r.json.data.msg)) || ''
+          const already = /已签到|already|重复/i.test(msg) || (r.json && r.json.code !== 0 && /签到/i.test(msg))
+          results.push({ slot: ref, realm: realm, ok: r.status === 200 && r.json && r.json.code === 0, already: already, msg: msg || ('HTTP ' + r.status) })
+        }
+        const okCount = results.filter(x => x.ok || x.already).length
+        return { ok: true, total: results.length, success: okCount, results: results }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // RPC：余额查询（remain/total，含各账号）
+    rpc['freeroute.cb.usage'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持余额查询' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const results = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const r = await cbBillingMeter(cred, realm, CB_PATHS.billingMeter, 'POST', {})
+          let remain = -1, total = -1
+          try {
+            const list = r.json && r.json.data && (r.json.data.creditPackages || r.json.data.list || r.json.data.packages)
+            if (Array.isArray(list)) {
+              for (const pkg of list) {
+                const sz = Number(pkg.size || pkg.credit || 0)
+                const rm = Number(pkg.remain !== undefined ? pkg.remain : (pkg.cycleRemain || 0))
+                total += sz; remain += Math.max(0, Math.min(rm, sz))
+              }
+            }
+          } catch (e) { }
+          results.push({ realm: realm, nickname: cred.nickname || '', ok: r.status === 200 && r.json && r.json.code === 0, remain: remain, total: total, msg: r.json && r.json.msg || '' })
+        }
+        return { ok: true, results: results }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // RPC：成长任务列表 + 一键领取可领奖励（accept→claim 链）
+    rpc['freeroute.cb.growth'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持成长任务' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const all = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const base = CB_REALM[realm].chat
+          const lr = await cbOpsRequest(cred, realm, base, CB_PATHS.tasksList, 'GET', null)
+          if (lr.status !== 200 || !lr.json || lr.json.code !== 0) {
+            all.push({ realm: realm, nickname: cred.nickname || '', ok: false, msg: lr.json && lr.json.msg || ('HTTP ' + lr.status) })
+            continue
+          }
+          const tasks = (lr.json.data && (lr.json.data.tasks || lr.json.data.list)) || []
+          let claimed = 0
+          const claimable = []
+          for (const t of tasks) {
+            // 领取条件：已完成未领取（字段名实测有两种：claimed/claim_status）
+            const done = t.status === 'finished' || t.status === 'completed' || t.finished === true
+            const notClaimed = !t.claimed && t.claim_status !== 'claimed' && t.claimed !== true
+            if (done && notClaimed && t.task_code) claimable.push(t.task_code)
+          }
+          if (claimable.length > 0) {
+            // accept 领取（批量）
+            await cbOpsRequest(cred, realm, base, CB_PATHS.tasksAccept, 'POST', { task_codes: claimable })
+            claimed = claimable.length
+          }
+          // 逐个 claim（部分任务要求单独领取）
+          for (const code of claimable) {
+            try { await cbOpsRequest(cred, realm, base, CB_PATHS.taskClaim + encodeURIComponent(code) + '/claim', 'POST', {}) } catch (e) { }
+          }
+          all.push({ realm: realm, nickname: cred.nickname || '', ok: true, tasks: tasks.length, claimed: claimed, claimable: claimable })
+        }
+        return { ok: true, accounts: all }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // RPC：连登状态 + 一键兑换已解锁档位 + 抽完抽奖次数
+    rpc['freeroute.cb.streak'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持连登任务' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const out = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const base = CB_REALM[realm].chat
+          const sr = await cbOpsRequest(cred, realm, base, CB_PATHS.streak, 'GET', null)
+          if (sr.status !== 200 || !sr.json || sr.json.code !== 0) {
+            out.push({ realm: realm, nickname: cred.nickname || '', ok: false, msg: sr.json && sr.json.msg || ('HTTP ' + sr.status) })
+            continue
+          }
+          const data = sr.json.data || {}
+          const streak = data.streak || {}
+          const rs = data.redemption_status || {}
+          const tiers = Array.isArray(rs.tiers) ? rs.tiers : []
+          // 兑换已解锁（unlocked）且未兑换的档位
+          let redeemed = 0
+          for (const t of tiers) {
+            const status = String(t.status || rs['tier_' + t.tier + '_status'] || '')
+            if ((status === 'unlocked' || status === 'claimable' || t.unlocked === true) && t.redeemed !== true && t.days) {
+              try {
+                const rr = await cbOpsRequest(cred, realm, base, CB_PATHS.streakRedeem, 'POST', { tier: t.tier, client_token: 'fr-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) })
+                if (rr.status === 200) redeemed += 1
+              } catch (e) { }
+            }
+          }
+          // 抽完剩余抽奖次数
+          let draws = 0
+          try {
+            const ls = await cbOpsRequest(cred, realm, base, CB_PATHS.lotterySummary, 'GET', null)
+            if (ls.status === 200 && ls.json && ls.json.code === 0) {
+              let chances = Number((ls.json.data && (ls.json.data.chances || ls.json.data.remain_chances)) || 0)
+              while (chances > 0 && draws < 10) {
+                const dr = await cbOpsRequest(cred, realm, base, CB_PATHS.lotteryDraw, 'POST', {})
+                if (!(dr.status === 200 && dr.json && dr.json.code === 0)) break
+                draws += 1
+                chances -= 1
+              }
+            }
+          } catch (e) { }
+          out.push({ realm: realm, nickname: cred.nickname || '', ok: true, days: streak.days || 0, redeemed: redeemed, draws: draws })
+        }
+        return { ok: true, accounts: out }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // RPC：猫猫旅行（状态查询 + 出发 + 领取奖励）
+    rpc['freeroute.cb.travel'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持猫猫旅行' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const out = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const base = CB_REALM[realm].chat
+          const st = await cbOpsRequest(cred, realm, base, CB_PATHS.travelStatus, 'GET', null)
+          if (st.status !== 200 || !st.json || st.json.code !== 0) {
+            out.push({ realm: realm, nickname: cred.nickname || '', ok: false, msg: st.json && st.json.msg || ('HTTP ' + st.status) })
+            continue
+          }
+          const data = st.json.data || {}
+          // 出发条件：不在旅行中
+          const onTrip = data.traveling === true || data.on_trip === true || (data.status && String(data.status) !== 'idle')
+          let departed = false, claimed = false
+          if (!onTrip) {
+            const dp = await cbOpsRequest(cred, realm, base, CB_PATHS.travelDepart, 'POST', {})
+            departed = dp.status === 200 && dp.json && dp.json.code === 0
+          } else {
+            // 旅行完成可领取
+            const done = data.finished === true || data.can_claim === true
+            if (done) {
+              const cl = await cbOpsRequest(cred, realm, base, CB_PATHS.travelClaim, 'POST', {})
+              claimed = cl.status === 200 && cl.json && cl.json.code === 0
+            }
+          }
+          out.push({ realm: realm, nickname: cred.nickname || '', ok: true, onTrip: onTrip, departed: departed, claimed: claimed, raw: data.status || '' })
+        }
+        return { ok: true, accounts: out }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // RPC：试用加油包领取（global trial）
+    rpc['freeroute.cb.trial'] = async function (args) {
+      try {
+        const id = args && args.id
+        const up = effectiveMap().get(id)
+        if (!up || (id !== 'codebuddy' && id !== 'codebuddy-en')) return { ok: false, error: '该上游不支持试用领取' }
+        const creds = await codebuddyCreds(up)
+        if (creds.length === 0) return { ok: false, error: '该上游还没有已登录账号' }
+        const results = []
+        for (const { ref, cred } of creds) {
+          const realm = credRealm(cred)
+          const r = await cbOpsRequest(cred, realm, CB_REALM[realm].billing, CB_PATHS.trial, 'POST', null)
+          const msg = (r.json && r.json.msg) || ''
+          results.push({ realm: realm, nickname: cred.nickname || '', ok: r.status === 200 && r.json && r.json.code === 0, msg: msg || ('HTTP ' + r.status) })
+        }
+        return { ok: true, results: results }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    // ---- 定时任务调度（签到 / 活跃上报占位 / 保活）----
+    // timer 服务可用时按小时粒度调度：每天 9 点与 21 点自动签到。
+    // 开关持久化在 userConfig.cbSchedule = { checkin: true, hours: [9, 21] }。
+    let cbScheduleTimer = null
+    let cbLastRunDay = ''
+    async function cbScheduleTick() {
+      try {
+        const cfg = (userConfig.cbSchedule = userConfig.cbSchedule || {})
+        if (cfg.checkin === false) return
+        const hours = Array.isArray(cfg.hours) && cfg.hours.length > 0 ? cfg.hours : [9, 21]
+        const now = new Date()
+        const dayKey = now.toISOString().slice(0, 10)
+        if (!hours.includes(now.getHours())) return
+        if (cbLastRunDay === dayKey + ':' + now.getHours()) return
+        cbLastRunDay = dayKey + ':' + now.getHours()
+        for (const id of ['codebuddy', 'codebuddy-en']) {
+          try {
+            const r = await rpc['freeroute.cb.checkin']({ id: id })
+            if (r && r.ok) log('[freeroute] 定时签到 ' + id + '：' + r.success + '/' + r.total)
+          } catch (e) { }
+        }
+      } catch (e) { }
+    }
+    function setupCbSchedule() {
+      if (cbScheduleTimer) return
+      // 每小时整点附近的 5 分钟窗口内尝试一次（timer 服务精度有限，取每小时第 2 分钟）
+      cbScheduleTimer = timer.timeout(function loop() {
+        cbScheduleTick().catch(function () { })
+        cbScheduleTimer = timer.timeout(loop, 3600 * 1000)
+      }, 120 * 1000)
+    }
+    try { setupCbSchedule() } catch (e) { }
     rpc['freeroute.state'] = async function () { return buildState() }
     rpc['freeroute.set-key'] = async function (args) {
       if (credentials === undefined) return { ok: false, error: 'credentials 服务不可用' }

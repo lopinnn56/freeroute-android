@@ -355,6 +355,8 @@ function buildUpstreamCard(u) {
       const oauthBtn = el('div', 'btn green r3 sm flex1', '🔗 链接登录');
       oauthBtn.onclick = () => doOAuthLogin(u.id, oauthBtn);
       body.appendChild(oauthBtn);
+      // 运维操作（workbuddy2api 同款：签到/余额/成长/连登/旅行/试用）
+      body.appendChild(buildCodeBuddyOps(u.id));
     }
     body.appendChild(krow);
   } else {
@@ -834,6 +836,60 @@ async function doCatalogSync() {
     refreshState();
   } catch (e) { toast(e.message); }
 }
+// ---------- CodeBuddy 运维（workbuddy2api 能力：签到/余额/成长/连登/旅行/试用） ----------
+// 卡片上的运维按钮行：每个按钮调用对应 RPC，结果弹出简洁汇总。
+function buildCodeBuddyOps(upId) {
+  const wrap = el('div', 'row gap');
+  wrap.style.marginTop = '6px';
+  const ops = [
+    { label: '签到', method: 'cbCheckin', exec: (r) => {
+      const okN = (r && r.success) || 0;
+      return r && r.ok ? ('签到完成 ' + okN + '/' + (r.total || 0) + ' 个账号') : ('签到失败: ' + ((r && r.error) || ''));
+    } },
+    { label: '余额', method: 'cbUsage', exec: (r) => {
+      if (!r || !r.ok) return '余额查询失败: ' + ((r && r.error) || '');
+      const acts = r.results || [];
+      return '余额：' + acts.map(a => (a.nickname || '账号') + ' ' + (a.remain >= 0 ? a.remain + '/' + a.total : '—')).join('；');
+    } },
+    { label: '成长任务', method: 'cbGrowth', exec: (r) => {
+      if (!r || !r.ok) return '成长任务失败: ' + ((r && r.error) || '');
+      const claims = (r.accounts || []).reduce((s, a) => s + (a.claimed || 0), 0);
+      return '成长任务：领取 ' + claims + ' 个奖励';
+    } },
+    { label: '连登+抽奖', method: 'cbStreak', exec: (r) => {
+      if (!r || !r.ok) return '连登失败: ' + ((r && r.error) || '');
+      const sum = (r.accounts || []).reduce((s, a) => s + (a.redeemed || 0), 0);
+      const draws = (r.accounts || []).reduce((s, a) => s + (a.draws || 0), 0);
+      return '连登：兑换 ' + sum + ' 档，抽奖 ' + draws + ' 次';
+    } },
+    { label: '猫猫旅行', method: 'cbTravel', exec: (r) => {
+      if (!r || !r.ok) return '旅行失败: ' + ((r && r.error) || '');
+      const d = (r.accounts || []).filter(a => a.departed).length;
+      const c = (r.accounts || []).filter(a => a.claimed).length;
+      return '旅行：出发 ' + d + '，领取 ' + c;
+    } },
+    { label: '试用包', method: 'cbTrial', exec: (r) => {
+      if (!r || !r.ok) return '试用领取失败: ' + ((r && r.error) || '');
+      const okN = (r.results || []).filter(x => x.ok).length;
+      return '试用包：领取成功 ' + okN + '/' + (r.results || []).length;
+    } }
+  ];
+  ops.forEach((op, i) => {
+    const b = el('div', 'btn blue r3 sm flex1', op.label);
+    if (i > 0) b.style.marginLeft = '4px';
+    b.onclick = async () => {
+      b.textContent = '…';
+      try {
+        const r = await rpc(op.method, { id: upId });
+        toast(op.exec(r));
+      } catch (e) { toast(e.message); }
+      b.textContent = op.label;
+    };
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+
 // ---------- OAuth 链接登录（CodeBuddy 族） ----------
 // 浏览器打开授权页 → 前端每 3s 轮询引擎 → 上游发 token 后自动入凭据环。
 async function doOAuthLogin(upstreamId, btn) {
