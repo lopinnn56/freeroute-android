@@ -2682,6 +2682,149 @@ function log (message) {
         return { ok: true, suppliers: details.length, keys: keys, skipped: skipped, skippedSup: skippedSup, details: details }
       } catch (e) { return { ok: false, error: emsg(e) } }
     }
+
+    // ---- OAuth 链接登录（CodeBuddy 族，来自 dsh-router-codebuddy）----
+    // 流程：start 拿 authUrl → 浏览器打开 → 前端每 3s poll → 引擎查
+    // token?state=... → code 11217 = 等待授权；code 0 = 拿到 accessToken，
+    // 直接入该上游的凭据环（多账号自动递增 KEY_2/KEY_3…）。
+    const OAUTH_PROVIDERS = {
+      'codebuddy': {
+        stateUrl: 'https://copilot.tencent.com/v2/plugin/auth/state',
+        tokenUrl: 'https://copilot.tencent.com/v2/plugin/auth/token',
+        domain: 'copilot.tencent.com',
+        baseHeaders: {
+          'user-agent': 'CLI/2.108.1 CodeBuddy/2.108.1',
+          'x-product': 'SaaS', 'x-ide-type': 'CLI', 'x-ide-name': 'CLI',
+          'x-requested-with': 'XMLHttpRequest', 'x-codebuddy-request': '1'
+        }
+      },
+      'codebuddy-en': {
+        stateUrl: 'https://www.workbuddy.ai/v2/plugin/auth/state',
+        tokenUrl: 'https://www.workbuddy.ai/v2/plugin/auth/token',
+        domain: 'www.workbuddy.ai',
+        baseHeaders: {
+          'user-agent': 'WorkBuddy/2.108.1',
+          'x-product': 'SaaS', 'x-ide-type': 'DESKTOP', 'x-requested-with': 'XMLHttpRequest'
+        }
+      }
+    }
+    const oauthPending = new Map() // upstreamId -> { state, startedAt, deadline }
+
+    async function oauthHttpRequest(method, url, headers, body) {
+      const curl = await ensureCurl()
+      return new Promise(function (resolve, reject) {
+        let settled = false
+        let proc = null
+        const dispose = timer.timeout(function () {
+          if (settled) return
+          settled = true
+          try { if (proc) proc.terminate() } catch (e) { }
+          reject(mkFail('请求超时', 'TIMEOUT'))
+        }, 20000)
+        function finish(fn, value) {
+          if (settled) return
+          settled = true
+          try { dispose() } catch (e) { }
+          fn(value)
+        }
+        try {
+          const argv = [curl, '-sS', '-L', '--connect-timeout', '12', '-X', method, url]
+          for (const pair of Object.entries(headers || {})) argv.push('-H', pair[0] + ': ' + pair[1])
+          if (body) argv.push('--data-binary', body)
+          argv.push('-w', TRAILER)
+          proc = subprocess.spawn({ argv: argv, cwd: '/tmp', stdio: { stdin: body ? { data: body } : 'ignore', stdout: 'pipe', stderr: { maxBytes: 1024 } }, graceMs: 2000 })
+        } catch (e) { finish(reject, mkFail('curl 启动失败: ' + emsg(e), 'TRANSPORT')); return }
+        const dec = new TextDecoder()
+        let out = ''
+        ;(async function () {
+          try {
+            for await (const b of proc.stdout) out += dec.decode(b, { stream: true })
+            out += dec.decode()
+            let exit = null
+            try { exit = await proc.done } catch (e2) { }
+            const m = /__FREEROUTE_HTTP_(\d{3})__/.exec(out)
+            const status = m ? Number(m[1]) : 0
+            const text = out.replace(/__FREEROUTE_HTTP_\d{3}__/, '').trim()
+            finish(resolve, { status: status, body: text })
+          } catch (e) { finish(reject, (e instanceof Error) ? e : mkFail(emsg(e), 'TRANSPORT')) }
+        })()
+      })
+    }
+
+    rpc['freeroute.oauth.start'] = async function (args) {
+      try {
+        const id = args && args.id
+        const p = OAUTH_PROVIDERS[id]
+        if (!p) return { ok: false, error: '该上游不支持链接登录: ' + id }
+        const headers = Object.assign({
+          'content-type': 'application/json', accept: 'application/json',
+          'x-domain': p.domain, 'x-no-authorization': 'true',
+          'x-no-user-id': 'true'
+        }, p.baseHeaders)
+        const r = await oauthHttpRequest('POST', p.stateUrl + '?platform=CLI', headers, '{}')
+        if (r.status !== 200) return { ok: false, error: 'state 请求失败 HTTP ' + r.status }
+        let j
+        try { j = JSON.parse(r.body) } catch (e) { return { ok: false, error: 'state 响应解析失败' } }
+        if (j.code !== 0 || !j.data || !j.data.state || !j.data.authUrl) {
+          return { ok: false, error: 'state 错误: ' + (j.msg || 'missing state') }
+        }
+        oauthPending.set(id, { state: j.data.state, startedAt: Date.now(), deadline: Date.now() + 300000 })
+        return { ok: true, loginUrl: j.data.authUrl, expiresIn: 300 }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    rpc['freeroute.oauth.poll'] = async function (args) {
+      try {
+        const id = args && args.id
+        const p = OAUTH_PROVIDERS[id]
+        const pend = oauthPending.get(id)
+        if (!p || !pend) return { ok: false, pending: false, error: '没有进行中的登录' }
+        if (Date.now() > pend.deadline) { oauthPending.delete(id); return { ok: false, pending: false, error: '登录超时，请重试' } }
+        const headers = Object.assign({
+          accept: 'application/json',
+          'x-domain': p.domain, 'x-no-authorization': 'true',
+          'x-no-user-id': 'true', 'x-no-enterprise-id': 'true', 'x-no-department-info': 'true'
+        }, p.baseHeaders)
+        let r
+        try { r = await oauthHttpRequest('GET', p.tokenUrl + '?state=' + encodeURIComponent(pend.state), headers, null) }
+        catch (e) { return { ok: true, pending: true } }
+        if (r.status !== 200) return { ok: true, pending: true }
+        let j
+        try { j = JSON.parse(r.body) } catch (e) { return { ok: true, pending: true } }
+        if (j.code === 11217) return { ok: true, pending: true } // 等待用户授权
+        if (j.code !== 0 || !j.data || !j.data.accessToken) {
+          oauthPending.delete(id)
+          return { ok: false, pending: false, error: j.msg || '登录失败' }
+        }
+        // 成功：写入该上游凭据环（自动递增下一把）
+        oauthPending.delete(id)
+        const up = effectiveMap().get(id)
+        if (!up) return { ok: false, pending: false, error: '找不到上游: ' + id }
+        const token = String(j.data.accessToken).trim()
+        if (credentials !== undefined) {
+          const refs = keyRefsFor(up)
+          let slot = -1
+          for (let i = 0; i < refs.length; i++) {
+            try {
+              const d = await credentials.describe(refs[i])
+              if (!d || !d.configured) { slot = i; break }
+            } catch (e) { if (i === refs.length - 1) slot = refs.length - 1 }
+          }
+          if (slot < 0) return { ok: false, pending: false, error: '凭据环已满（至多 8 把）' }
+          await credentials.set(refs[slot], token)
+          try { await probeModels(up, true) } catch (e) { }
+          try { await checkTakeover() } catch (e) { }
+        }
+        log('[freeroute] OAuth 登录成功: ' + id + '（KEY' + (slot > 0 ? '_' + (slot + 1) : '') + '）')
+        return { ok: true, pending: false, success: true, slot: slot }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
+
+    rpc['freeroute.oauth.cancel'] = async function (args) {
+      const id = args && args.id
+      oauthPending.delete(id)
+      return { ok: true }
+    }
     rpc['freeroute.state'] = async function () { return buildState() }
     rpc['freeroute.set-key'] = async function (args) {
       if (credentials === undefined) return { ok: false, error: 'credentials 服务不可用' }

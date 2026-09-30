@@ -13,8 +13,10 @@ android {
     applicationId "dev.freeroute.app"
     minSdk 24
     targetSdk 34
-    versionCode 2
-    versionName "0.8.20"
+    // 自动版本号：CI 传 -PversionCode / -PversionName（构建号单调递增，
+    // Android 据此判定可升级覆盖）；本地不传则用兜底值。
+    versionCode (project.findProperty('versionCode') as Integer ?: 2)
+    versionName (project.findProperty('versionName') ?: "0.8.20")
     ndk {
       // 只打包 arm64-v8a：Node 运行时的体积决定不宜再放宽
       abiFilters 'arm64-v8a'

@@ -350,6 +350,12 @@ function buildUpstreamCard(u) {
       catch (e) { toast(e.message); }
     };
     krow.appendChild(clearBtn);
+    // OAuth 链接登录（dsh-router-codebuddy 同款流程）：浏览器授权 → 自动入库
+    if (u.id === 'codebuddy' || u.id === 'codebuddy-en') {
+      const oauthBtn = el('div', 'btn green r3 sm flex1', '🔗 链接登录');
+      oauthBtn.onclick = () => doOAuthLogin(u.id, oauthBtn);
+      body.appendChild(oauthBtn);
+    }
     body.appendChild(krow);
   } else {
     body.appendChild(el('div', 'up-note', '该上游免鉴权，无需配置 Key。'));
@@ -828,6 +834,42 @@ async function doCatalogSync() {
     refreshState();
   } catch (e) { toast(e.message); }
 }
+// ---------- OAuth 链接登录（CodeBuddy 族） ----------
+// 浏览器打开授权页 → 前端每 3s 轮询引擎 → 上游发 token 后自动入凭据环。
+async function doOAuthLogin(upstreamId, btn) {
+  const label = btn ? btn.textContent : '🔗 链接登录';
+  try {
+    btn.textContent = '获取链接…';
+    const r = await rpc('oauthStart', { id: upstreamId });
+    if (!r || !r.ok) { toast('获取登录链接失败: ' + ((r && r.error) || '未知')); btn.textContent = label; return; }
+    // 用系统浏览器打开授权页（Android 桥 / 桌面新窗口）
+    if (window.AndroidBridge && typeof window.AndroidBridge.openBrowser === 'function') {
+      window.AndroidBridge.openBrowser(r.loginUrl);
+    } else {
+      try { window.open(r.loginUrl, '_blank'); } catch (e) { toast('请复制链接到浏览器打开: ' + r.loginUrl); }
+    }
+    toast('请在浏览器中完成授权，授权后自动返回…');
+    btn.textContent = '等待授权…';
+    const deadline = Date.now() + 290000;
+    while (Date.now() < deadline) {
+      await new Promise(res => setTimeout(res, 3000));
+      const p = await rpc('oauthPoll', { id: upstreamId });
+      if (p && p.ok && p.pending) continue;              // 仍在等待
+      if (p && p.ok && p.success) {
+        toast('✓ 登录成功，凭证已入库（第 ' + ((p.slot || 0) + 1) + ' 把 Key）');
+        btn.textContent = label;
+        refreshState();
+        return;
+      }
+      // 失败 / 超时
+      toast('登录失败: ' + ((p && p.error) || '未知'));
+      btn.textContent = label;
+      return;
+    }
+    btn.textContent = label;
+  } catch (e) { toast(e.message); btn.textContent = label; }
+}
+
 async function doFreellmapiSync() {
   toast('正在同步 FreeLLMAPI 提供商…');
   try {

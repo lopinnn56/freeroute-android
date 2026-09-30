@@ -97,14 +97,19 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-      - name: 构建 Release APK（固定签名）
+      - name: 构建 Release APK（固定签名 + 自动版本号）
         working-directory: android
         env:
           ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        # 自动版本号：versionCode = run_number（每次构建单调递增），
+        # versionName = 0.8.<run_number>，APK 可原地升级安装。
+        run: |
+          gradle :app:assembleRelease --no-daemon --stacktrace \
+            -PversionCode=${{ github.run_number }} \
+            -PversionName=0.8.${{ github.run_number }}
 
       - name: 验证签名指纹（固定 keystore）
         if: always()
@@ -136,7 +141,7 @@ jobs:
       - name: 收集产物（带版本号命名）
         run: |
           set -euo pipefail
-          VERSION=$(node -p "require('./engine/package.json').version" 2>/dev/null || echo "0.0.0")
+          VERSION="0.8.${{ github.run_number }}"
           SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
           mkdir -p out
           for f in android/app/build/outputs/apk/release/*.apk; do
@@ -157,7 +162,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION=$(node -p "require('./engine/package.json').version" 2>/dev/null || echo "0.0.0")
+          VERSION="0.8.${{ github.run_number }}"
           SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
           APK=$(ls out/freeroute-*.apk | head -1)
           TAG="continuous-latest"
