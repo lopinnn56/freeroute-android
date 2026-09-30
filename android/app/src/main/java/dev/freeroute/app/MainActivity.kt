@@ -1,6 +1,7 @@
 package dev.freeroute.app
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -12,7 +13,6 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.text.method.ScrollingMovementMethod
@@ -21,8 +21,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -31,9 +31,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import java.io.File
+import org.json.JSONObject
 
 /**
  * 宿主 Activity：一个全屏 WebView，指向引擎在本机监听的 /freeroute/app/。
@@ -55,6 +56,88 @@ class MainActivity : AppCompatActivity() {
   private lateinit var btnRow: LinearLayout
   private val ui = Handler(Looper.getMainLooper())
   private var loadedPort = 0
+  /** 导出配置时暂存待写入的 JSON 文本（SAF 结果回调时使用） */
+  private var pendingExportJson = ""
+
+  // SAF 结果回调（必须在 Activity started 前注册）：导出=让用户选保存位置；
+  // 导入=让用户选文件并整文件读取回 WebUI。
+  private val createFileLauncher =
+    registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+      if (uri != null) saveConfigTo(uri)
+    }
+  private val openFileLauncher =
+    registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) importConfigFrom(uri)
+    }
+
+  /** JS 桥：WebUI 通过 window.AndroidBridge 调用宿主原生能力 */
+  private inner class FreerouteBridge {
+    /** 用系统默认浏览器打开外部注册页 */
+    @JavascriptInterface
+    fun openBrowser(url: String?) {
+      val target = url?.trim().orEmpty()
+      if (target.isEmpty()) return
+      runOnUiThread {
+        try {
+          val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+          startActivity(intent)
+        } catch (e: Exception) {
+          Log.e(TAG, "openBrowser 失败: $target", e)
+          Toast.makeText(this@MainActivity, "无法打开浏览器: $target", Toast.LENGTH_LONG).show()
+        }
+      }
+    }
+
+    /** 导出配置：弹出系统「保存到」对话框让用户选择位置 */
+    @JavascriptInterface
+    fun saveConfig(json: String?) {
+      pendingExportJson = json.orEmpty()
+      runOnUiThread { createFileLauncher.launch("freeroute-config.json") }
+    }
+
+    /** 导入配置：弹出系统文件选择器（SAF） */
+    @JavascriptInterface
+    fun pickImport() {
+      runOnUiThread { openFileLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+    }
+  }
+
+  private fun saveConfigTo(uri: Uri) {
+    try {
+      val json = pendingExportJson
+      if (json.isEmpty()) { toast("导出内容为空"); return }
+      contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+      val display = displayNameOf(uri) ?: "freeroute-config.json"
+      // Toast + 通知 WebUI 保存完成
+      runOnUiThread {
+        Toast.makeText(this, "配置已保存: $display", Toast.LENGTH_LONG).show()
+      }
+      web.evaluateJavascript("window.__onConfigSaved && window.__onConfigSaved(${JSONObject.quote(uriString(display))})", null)
+    } catch (e: Exception) {
+      Log.e(TAG, "保存配置失败", e)
+      runOnUiThread { Toast.makeText(this, "保存失败: ${e.message}", Toast.LENGTH_LONG).show() }
+    }
+  }
+
+  private fun importConfigFrom(uri: Uri) {
+    try {
+      val text = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+      web.evaluateJavascript("window.__onConfigPicked && window.__onConfigPicked(${JSONObject.quote(text)})", null)
+    } catch (e: Exception) {
+      Log.e(TAG, "读取配置失败", e)
+      runOnUiThread { Toast.makeText(this, "读取失败: ${e.message}", Toast.LENGTH_LONG).show() }
+    }
+  }
+
+  private fun displayNameOf(uri: Uri): String? {
+    return try {
+      contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    } catch (e: Exception) { null }
+  }
+
+  private fun uriString(display: String): String = display
+  private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
   private val engineReceiver = object : BroadcastReceiver() {
     override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -95,58 +178,13 @@ class MainActivity : AppCompatActivity() {
         override fun onPageFinished(view: WebView?, url: String?) {
           if (url != null && url.contains("/freeroute/app")) showWeb()
         }
-        // 「申请 Key」等外链：WebUI 用 freeroute://open?url=… 触发，
-        // 这里拦截后用系统默认浏览器打开（避免 WebView 内嵌外部网站）。
-        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-          val u = request?.url ?: return false
-          if (u.scheme == "freeroute" && u.host == "open") {
-            val target = u.getQueryParameter("url")
-            if (target != null && target.isNotEmpty()) {
-              try {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
-              } catch (e: Exception) {
-                Log.e(TAG, "无法打开外部浏览器: $target", e)
-              }
-            }
-            return true
-          }
-          return false
-        }
       }
     }
-    // 下载拦截：WebUI 的「导出配置」跳转到真实 HTTP URL（/freeroute/config/export），
-    // 这里拦截下载，写入应用专属下载目录，Toast 提示完整路径（用户可直接找到）。
-    // this 在这里指 MainActivity（onCreate 作用域）。
-    web.setDownloadListener { url, _, _, _, _ ->
-      try {
-        val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "freeroute")
-        if (!dir.exists()) dir.mkdirs()
-        val fileName = if (url.contains("config/export")) "freeroute-config.json"
-          else Uri.parse(url).lastPathSegment?.takeLast(60) ?: ("freeroute-" + System.currentTimeMillis() + ".json")
-        val dest = File(dir, fileName)
-        // 后台线程拉取并落盘
-        Thread {
-          try {
-            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection)
-            conn.connectTimeout = 10000
-            conn.readTimeout = 30000
-            conn.inputStream.use { input ->
-              dest.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
-            }
-            runOnUiThread {
-              Toast.makeText(this@MainActivity, "已保存: ${dest.absolutePath}", Toast.LENGTH_LONG).show()
-              Log.i(TAG, "配置导出完成: ${dest.absolutePath}")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "配置导出下载失败: $url", e)
-          }
-        }.start()
-      } catch (e: Exception) {
-        Log.e(TAG, "下载拦截失败: $url", e)
-      }
-    }
+    // JS 桥：WebUI 通过 window.AndroidBridge 调用原生能力
+    // （申请 Key 跳系统浏览器 / 导出选位置 / 导入选文件）
+    @SuppressLint("JavascriptInterface")
+    web.addJavascriptInterface(FreerouteBridge(), "AndroidBridge")
+
     web.webChromeClient = object : WebChromeClient() {
         override fun onConsoleMessage(m: ConsoleMessage): Boolean {
           Log.d(TAG, "webui: ${m.message()} @${m.lineNumber()}")

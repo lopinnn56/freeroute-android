@@ -381,10 +381,10 @@ function buildUpstreamCard(u) {
   arow.appendChild(testBtn); arow.appendChild(probeBtn);
   if (u.signupUrl) {
     const signup = el('div', 'btn blue-tint r3 sm flex1', '申请 Key');
-    // 交给 Android 宿主拦截 freeroute://open → 用系统默认浏览器打开注册页
+    // Android：用宿主桥调系统默认浏览器打开注册页；桌面/降级用新窗口
     signup.onclick = () => {
-      if (location.protocol === 'http:' || location.protocol === 'https:') {
-        location.href = 'freeroute://open?url=' + encodeURIComponent(u.signupUrl);
+      if (window.AndroidBridge && typeof window.AndroidBridge.openBrowser === 'function') {
+        window.AndroidBridge.openBrowser(u.signupUrl);
       } else {
         try { window.open(u.signupUrl, '_blank'); } catch (e) { toast('请复制链接到浏览器打开: ' + u.signupUrl); }
       }
@@ -611,7 +611,13 @@ function renderAdvanced() {
   hiddenFile.type = 'file';
   hiddenFile.accept = '.json';
   hiddenFile.style.display = 'none';
-  importBtn.onclick = () => { try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); } };
+  importBtn.onclick = () => {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickImport === 'function') {
+      window.AndroidBridge.pickImport();
+    } else {
+      try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); }
+    }
+  };
   hiddenFile.onchange = async function () {
     const f = hiddenFile.files && hiddenFile.files[0];
     hiddenFile.value = '';
@@ -849,21 +855,21 @@ async function doHealthCheck() {
 }
 
 // ---------- 配置备份（导出 / 恢复） ----------
-// 导出：跳转到引擎的 /freeroute/config/export 真实 HTTP 端点。
-// Android 宿主 DownloadListener 拦截后写入应用下载目录，并 Toast 提示
-// 完整保存路径；桌面浏览器则按附件下载。
+// 导出：Android 端用宿主桥弹「保存到」对话框让用户选位置（SAF）；
+// 桌面浏览器则跳转 HTTP 端点按附件下载。
 async function doExportConfig(btn) {
   const label = btn ? btn.textContent : '导出中…';
   if (btn) btn.textContent = '导出中…';
   try {
-    // 先探一下引擎是否可达（避免导出中没反应）
     const r = await rpc('freeroute.config.export');
-    if (r && r.ok) {
-      location.href = BASE + '/config/export';
-      // 桌面浏览器 / WebView 未拦截时也会触发下载；这里给引导文案
-      toast('正在导出配置…保存位置以系统提示为准');
+    if (!r || !r.ok) { toast('导出失败: ' + ((r && r.error) || '未知')); if (btn) btn.textContent = label; return; }
+    // 支持 Android 桥：弹系统保存位置选择器
+    if (window.AndroidBridge && typeof window.AndroidBridge.saveConfig === 'function') {
+      window.AndroidBridge.saveConfig(r.text);
+      toast('请在系统对话框中选择保存位置');
     } else {
-      toast('导出失败: ' + ((r && r.error) || '未知'));
+      // 桌面降级：HTTP 附件下载
+      location.href = BASE + '/config/export';
     }
   } catch (e) { toast(e.message); }
   if (btn) btn.textContent = label;
@@ -883,6 +889,28 @@ async function doImportConfig(file, onDone) {
   } catch (e) { toast(e.message); }
   if (onDone) onDone();
 }
+
+// 全局回调供 Android 桥调用（SAF 路径）：
+// - 配式导出完成（WebView 收到桌面路径字符串，给提示但不做文件操作）
+// - 导入完成：收到文件内容后整体覆盖配置并刷新
+window.__onConfigSaved = function(displayPath) {
+  toast('配置已保存到: ' + displayPath);
+};
+window.__onConfigPicked = async function(text) {
+  if (text === null || text === undefined) { toast('读取配置失败'); return; }
+  try {
+    const r = await rpc('freeroute.config.import', { text: text });
+    if (r && r.ok) {
+      const c = r.counts || {};
+      toast('配置已恢复：' + (c.upstreams || 0) + ' 个上游，' + (c.keys || 0) + ' 把 Key');
+      // 刷新状态以立即反馈
+      if (currentTab === 0) refreshState();
+      if (currentTab === 2) renderAdvanced();
+    } else {
+      toast('导入失败: ' + ((r && r.error) || '未知'));
+    }
+  } catch (e) { toast(e.message); }
+};
 // 生成「配置备份」卡片：包含 导出配置 / 恢复配置 按钮，服务页顶部最显眼。
 function buildConfigBackupCard() {
   const card = el('div', 'card');
@@ -905,7 +933,14 @@ function buildConfigBackupCard() {
   hiddenFile.type = 'file';
   hiddenFile.accept = '.json';
   hiddenFile.style.display = 'none';
-  importBtn.onclick = () => { try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); } };
+  // Android：调宿主桥用系统文件选择器（SAF）选文件并回调；桌面/降级用隐藏文件框
+  importBtn.onclick = () => {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickImport === 'function') {
+      window.AndroidBridge.pickImport();
+    } else {
+      try { hiddenFile.click(); } catch (e) { toast('无法打开文件选择器'); }
+    }
+  };
   hiddenFile.onchange = async function () {
     const f = hiddenFile.files && hiddenFile.files[0];
     hiddenFile.value = '';
