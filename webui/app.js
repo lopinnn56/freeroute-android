@@ -837,31 +837,46 @@ async function doCatalogSync() {
   } catch (e) { toast(e.message); }
 }
 // ---------- CodeBuddy 运维（workbuddy2api 能力：签到/余额/成长/连登/旅行/试用） ----------
+// 账号名友好化：上游常把一长串数字 ID 当作昵称返回，显示为「账号」更易读。
+function friendlyAccountName(n) {
+  const s = String(n || '').trim();
+  if (!s) return '账号';
+  if (/^\d+$/.test(s) && s.length >= 10) return '账号';
+  return s;
+}
+
 // 卡片上的运维按钮行：每个按钮调用对应 RPC，结果弹出简洁汇总。
 function buildCodeBuddyOps(upId) {
   const wrap = el('div', 'row gap');
   wrap.style.marginTop = '6px';
   const ops = [
     { label: '签到', method: 'cbCheckin', exec: (r) => {
-      const okN = (r && r.success) || 0;
-      let base = r && r.ok ? ('签到完成 ' + okN + '/' + (r.total || 0) + ' 个账号') : ('签到失败: ' + ((r && r.error) || ''));
-      const rs = (r && r.results) || [];
-      const diag = rs.map(x => '[HTTP ' + x.status + '] ' + (x.msg || '') + (x.raw ? ' | ' + x.raw.slice(0, 120) : '')).join(' ‖ ');
-      return diag ? (base + ' ‖ ' + diag) : base;
+      if (!r || !r.ok) return '签到失败: ' + ((r && r.error) || '未知');
+      const okN = r.success || 0;
+      // 成功不再带 HTTP / 原始响应，仅对失败账号补简短原因
+      const bad = (r.results || []).filter(x => !x.ok && !x.already);
+      let s = '✓ 签到完成 ' + okN + '/' + (r.total || 0) + ' 个账号';
+      if (bad.length > 0) s += '（失败: ' + bad.map(x => x.msg || ('HTTP ' + x.status)).join('；') + '）';
+      return s;
     } },
     { label: '余额', method: 'cbUsage', exec: (r) => {
-      if (!r || !r.ok) return '余额查询失败: ' + ((r && r.error) || '');
+      if (!r || !r.ok) return '余额查询失败: ' + ((r && r.error) || '未知');
       const acts = r.results || [];
-      const main = '余额：' + acts.map(a => (a.nickname || '账号') + ' ' + (a.remain >= 0 ? a.remain + '/' + a.total : '—')).join('；');
-      const diag = acts.map(a => (a.status ? '[HTTP ' + a.status + '] ' : '') + (a.raw ? a.raw.slice(0, 150) : '')).join(' ‖ ');
-      return diag ? (main + ' ‖ ' + diag) : main;
+      const shown = acts.map(a => friendlyAccountName(a.nickname) + ' ' + (a.remain >= 0 ? a.remain + '/' + a.total : '—'));
+      const bad = acts.filter(a => !a.ok);
+      let s = '余额：' + shown.join('；');
+      if (bad.length > 0) s += '（查询失败: ' + bad.map(a => a.msg || ('HTTP ' + a.status)).join('；') + '）';
+      return s;
     } },
     { label: '成长任务', method: 'cbGrowth', exec: (r) => {
-      if (!r || !r.ok) return '成长任务失败: ' + ((r && r.error) || '');
-      const claims = (r.accounts || []).reduce((s, a) => s + (a.claimed || 0), 0);
-      const base = '成长任务：领取 ' + claims + ' 个奖励';
-      const diag = (r.accounts || []).map(a => '可领' + (a.claimable || 0) + ' 原' + (a.raw ? ' | ' + a.raw.slice(0, 150) : '')).join(' ‖ ');
-      return diag ? (base + ' ‖ ' + diag) : base;
+      if (!r || !r.ok) return '成长任务失败: ' + ((r && r.error) || '未知');
+      const accs = r.accounts || [];
+      const claims = accs.reduce((s, a) => s + (a.claimed || 0), 0);
+      const claimable = accs.reduce((s, a) => s + (a.claimable || 0), 0);
+      const bad = accs.filter(a => !a.ok);
+      let s = claims > 0 ? ('✓ 领取 ' + claims + ' 个奖励') : ('无可领任务（可领 ' + claimable + '）');
+      if (bad.length > 0) s += '（失败: ' + bad.map(a => a.msg || '').join('；') + '）';
+      return s;
     } },
     { label: '连登+抽奖', method: 'cbStreak', exec: (r) => {
       if (!r || !r.ok) return '连登失败: ' + ((r && r.error) || '');
