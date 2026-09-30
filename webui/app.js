@@ -911,6 +911,25 @@ window.__onConfigPicked = async function(text) {
     }
   } catch (e) { toast(e.message); }
 };
+
+// RikkaHub 配置导入回调（Android 桥读取文件后调用）
+window.__onRikkaPicked = async function(text) {
+  if (!text) { toast('RikkaHub 配置为空'); return; }
+  toast('正在导入 RikkaHub 配置…');
+  try {
+    const r = await rpc('rikkaImport', { text: text });
+    if (r && r.ok) {
+      const st = r.skippedTypes || {};
+      const stTxt = Object.keys(st).map(k => k + '×' + st[k]).join('，');
+      toast('RikkaHub 导入完成：新增 ' + (r.added || 0) + '，更新 ' + (r.updated || 0) +
+        '，Key ' + (r.keys || 0) + ' 把' + (stTxt ? '（跳过 ' + stTxt + '）' : ''));
+      refreshState();
+      renderService();
+    } else {
+      toast('RikkaHub 导入失败: ' + ((r && r.error) || '未知'));
+    }
+  } catch (e) { toast(e.message); }
+};
 // 生成「配置备份」卡片：包含 导出配置 / 恢复配置 按钮，服务页顶部最显眼。
 function buildConfigBackupCard() {
   const card = el('div', 'card');
@@ -954,6 +973,32 @@ function buildConfigBackupCard() {
   row.appendChild(exportBtn);
   row.appendChild(importWrap);
   card.appendChild(row);
+
+  // RikkaHub 模型配置导入行
+  const rrow = el('div', 'row gap');
+  rrow.style.marginTop = '6px';
+  const rikkaBtn = el('div', 'btn purple r3 flex1', '导入 RikkaHub 配置');
+  rikkaBtn.style.cursor = 'pointer';
+  rikkaBtn.onclick = () => {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickRikkaImport === 'function') {
+      window.AndroidBridge.pickRikkaImport();
+    } else {
+      // 桌面降级：文件选择框直接读文本走同一回调
+      const fi = el('input', '');
+      fi.type = 'file';
+      fi.accept = '.json,.zip';
+      fi.onchange = async function () {
+        const f = fi.files && fi.files[0];
+        if (!f) return;
+        if (f.name.toLowerCase().endsWith('.zip')) { toast('桌面端请先解压出 settings.json 再导入'); return; }
+        window.__onRikkaPicked(await f.text());
+      };
+      fi.click();
+    }
+  };
+  rrow.appendChild(rikkaBtn);
+  card.appendChild(rrow);
+  card.appendChild(el('div', 'up-note', '支持 RikkaHub 的 settings.json（或完整备份 .zip）导入其 OpenAI 兼容模型提供商：自动转为自定义上游并带入 API Key。'));
   return card;
 }
 

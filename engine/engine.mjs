@@ -2389,6 +2389,89 @@ function log (message) {
         return { ok: true, counts: { order: clean.order.length, upstreams: Object.keys(clean.upstreams || {}).length, keys: keys ? Object.keys(keys).length : 0 } }
       } catch (e) { return { ok: false, error: emsg(e) } }
     }
+    // ---- RikkaHub 模型配置导入 ----
+    // RikkaHub 的 Settings.providers 是多态数组：{type:'openai'|'google'|'claude', ...}。
+    // openai 类型是标准 OpenAI 兼容网关（baseUrl + apiKey + models[].modelId），
+    // 全部转成 FreeRoute 自定义上游；google/claude 为原生协议，暂不支持，跳过。
+    // 输入可以是 settings.json 原文，也可以是 RikkaHub 备份 zip 中解出的该文件。
+    rpc['freeroute.rikka.import'] = async function (args) {
+      try {
+        const text = args && typeof args.text === 'string' ? args.text : ''
+        if (!text.trim()) return { ok: false, error: '导入内容为空' }
+        let data
+        try { data = JSON.parse(text) } catch (e) { return { ok: false, error: 'JSON 解析失败: ' + emsg(e) } }
+        // 兼容 RikkaHub 备份包形态：{version, type, data:{...settings}}
+        let providers = null
+        if (data && data.type === 'providers' && data.data) providers = data.data
+        else if (data && Array.isArray(data.providers)) providers = data.providers
+        if (!Array.isArray(providers)) return { ok: false, error: '未找到 providers 数组（需要 RikkaHub 的 settings.json）' }
+
+        let added = 0, updated = 0, skipped = 0, keys = 0
+        const skippedTypes = {}
+        const details = []
+        // 已占用 id：内置 + 远程 + 用户配置（非 rikka 产物一律避开）
+        const taken = new Set()
+        for (const b of BUILTIN_UPSTREAMS) taken.add(b.id)
+        for (const rid of Array.from(remoteUpstreams.keys())) taken.add(rid)
+        for (const uid of Object.keys(userConfig.upstreams || {})) {
+          if (!String(uid).startsWith('rikka-')) taken.add(uid)
+        }
+        for (const p of providers) {
+          if (!p || typeof p !== 'object') continue
+          // 只导入 OpenAI 兼容类型（google/claude 协议不同，跳过）
+          if (p.type !== 'openai') { skipped += 1; skippedTypes[p.type] = (skippedTypes[p.type] || 0) + 1; continue }
+          const baseUrl = String(p.baseUrl || '').trim().replace(/\/+$/, '')
+          if (!/^https?:\/\//.test(baseUrl)) { skipped += 1; continue }
+          // 自定义上游 id：rikka-<名称 slug>；同名则覆盖更新（视为本功能产物）
+          const base = slugText(p.name || 'rikka') || 'rikka'
+          const id = 'rikka-' + base
+          const isUpdate = !!(userConfig.upstreams || {})[id]
+          if (isUpdate) updated += 1
+          else if (taken.has(id)) { skipped += 1; continue }
+          else added += 1
+          // 模型列表：RikkaHub models[].modelId -> FreeRoute models[]
+          const models = []
+          for (const m of (Array.isArray(p.models) ? p.models : [])) {
+            const mid = m && typeof m.modelId === 'string' ? m.modelId.trim() : ''
+            if (!mid) continue
+            const mm = { id: mid, name: (typeof m.displayName === 'string' && m.displayName) ? m.displayName : mid, contextWindow: Number(m.contextWindow) > 0 ? Number(m.contextWindow) : 32768 }
+            models.push(mm)
+            if (models.length >= 24) break
+          }
+          const entry = {
+            custom: {
+              baseUrl: baseUrl,
+              // 与下方凭据 keyRef 一致（也等于 effectiveMap 对 custom 无 keyRef 时的默认推导）
+              keyRef: 'FREEROUTE_RIKKA_' + base.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_KEY',
+              name: (typeof p.name === 'string' && p.name) ? p.name : ('RikkaHub ' + base),
+              note: '来自 RikkaHub 导入',
+              defaultModel: models.length > 0 ? models[0].id : '',
+              models: models
+            },
+            enabled: p.enabled !== false
+          }
+          if (!userConfig.upstreams) userConfig.upstreams = {}
+          userConfig.upstreams[id] = entry
+          if (!Array.isArray(userConfig.order)) userConfig.order = []
+          if (!userConfig.order.includes(id)) userConfig.order.push(id)
+          // API Key 直接入凭据（keyRef 与 custom.keyRef 一致）
+          const apiKey = typeof p.apiKey === 'string' ? p.apiKey.trim() : ''
+          if (apiKey) {
+            try {
+              await credentials.set(entry.custom.keyRef, apiKey)
+              keys += 1
+            } catch (e) { }
+          }
+          details.push({ id: id, name: entry.custom.name, models: models.length, hasKey: !!apiKey })
+        }
+        if (added + updated > 0) {
+          writeConfigFile()
+          checkTakeover().catch(function () { })
+        }
+        log('[freeroute] RikkaHub 导入：新增 ' + added + '，更新 ' + updated + '，跳过 ' + skipped)
+        return { ok: true, added: added, updated: updated, skipped: skipped, keys: keys, skippedTypes: skippedTypes, details: details }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
     rpc['freeroute.state'] = async function () { return buildState() }
     rpc['freeroute.set-key'] = async function (args) {
       if (credentials === undefined) return { ok: false, error: 'credentials 服务不可用' }

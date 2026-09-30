@@ -112,6 +112,7 @@ html, body {
 .btn.neutral { color: var(--dim); background: var(--surface-alt); border-color: var(--border); }
 .btn.neutral-dark { color: var(--dim); background: var(--neutral-bg); border-color: var(--border); }
 .btn.yellow { color: var(--yellow); background: var(--yellow-bg); border-color: var(--yellow); }
+.btn.purple { color: var(--purple); background: var(--purple-bg); border-color: var(--purple); }
 .btn.plain { color: var(--blue); background: var(--surface-alt); border-color: var(--border); }
 .btn.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 

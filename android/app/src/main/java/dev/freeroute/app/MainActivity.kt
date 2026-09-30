@@ -69,6 +69,11 @@ class MainActivity : AppCompatActivity() {
     registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       if (uri != null) importConfigFrom(uri)
     }
+  // RikkaHub 配置导入：支持 .json（settings.json）和 .zip（RikkaHub 完整备份）
+  private val rikkaFileLauncher =
+    registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) rikkaImportFrom(uri)
+    }
 
   /** JS 桥：WebUI 通过 window.AndroidBridge 调用宿主原生能力 */
   private inner class FreerouteBridge {
@@ -100,6 +105,14 @@ class MainActivity : AppCompatActivity() {
     fun pickImport() {
       runOnUiThread { openFileLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
     }
+
+    /** 导入 RikkaHub 模型配置：支持 settings.json 或完整备份 .zip */
+    @JavascriptInterface
+    fun pickRikkaImport() {
+      runOnUiThread {
+        rikkaFileLauncher.launch(arrayOf("application/json", "application/zip", "application/octet-stream", "*/*"))
+      }
+    }
   }
 
   private fun saveConfigTo(uri: Uri) {
@@ -127,6 +140,50 @@ class MainActivity : AppCompatActivity() {
       Log.e(TAG, "读取配置失败", e)
       runOnUiThread { Toast.makeText(this, "读取失败: ${e.message}", Toast.LENGTH_LONG).show() }
     }
+  }
+
+  /** 读取 RikkaHub 配置：.json 直接回调；.zip 解出 settings.json 后回调 */
+  private fun rikkaImportFrom(uri: Uri) {
+    Thread {
+      try {
+        val name = displayNameOf(uri) ?: ""
+        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        if (bytes == null) { toastUi("读取失败"); return@Thread }
+        val text = if (name.lowercase().endsWith(".zip")) {
+          var found: String? = null
+          java.util.zip.ZipInputStream(bytes.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null && found == null) {
+              if (entry.name == "settings.json") {
+                found = zip.readBytes().toString(Charsets.UTF_8)
+              }
+              entry = zip.nextEntry
+            }
+          }
+          found
+        } else {
+          String(bytes, Charsets.UTF_8)
+        }
+        if (text.isNullOrEmpty()) {
+          toastUi("未找到 settings.json（请选择 RikkaHub 的配置文件或备份包）")
+          return@Thread
+        }
+        runOnUiThread {
+          web.evaluateJavascript(
+            "window.__onRikkaPicked && window.__onRikkaPicked(${JSONObject.quote(text)})",
+            null
+          )
+          Toast.makeText(this, "已读取 ${displayNameOf(uri) ?: "配置"}，正在导入…", Toast.LENGTH_SHORT).show()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "RikkaHub 导入读取失败", e)
+        toastUi("读取失败: ${e.message}")
+      }
+    }.start()
+  }
+
+  private fun toastUi(msg: String) = runOnUiThread {
+    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
   }
 
   private fun displayNameOf(uri: Uri): String? {

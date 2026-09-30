@@ -123,6 +123,7 @@ const RPC_METHOD_ALIAS = {
   freellmapiSync: 'freeroute.freellmapi.sync',
   configExport: 'freeroute.config.export',
   configImport: 'freeroute.config.import',
+  rikkaImport: 'freeroute.rikka.import',
   probe: 'freeroute.probe',
   test: 'freeroute.test',
   setDefault: 'freeroute.set-default',
