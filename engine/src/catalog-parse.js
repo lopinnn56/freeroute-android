@@ -62,11 +62,19 @@ function normalizeCatalogEntry(e) {
   }
   models.sort(function (a, b) { return b.contextWindow - a.contextWindow })
   const capped = models.slice(0, 24)
-  // 非标网关字段：chatPath 覆盖 /chat/completions；requestExtra 附加标量体字段
+  // 非标网关字段：chatPath 覆盖 /chat/completions；requestExtra 附加标量体字段；
+  // headers 附加/覆盖请求头（CodeBuddy 等网关要求特征头，如 X-Product: SaaS）
   const ex = {}
   if (e.requestExtra && typeof e.requestExtra === 'object' && !Array.isArray(e.requestExtra)) {
     for (const p of Object.entries(e.requestExtra)) {
       if (/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(p[0]) && (p[1] === null || typeof p[1] === 'string' || typeof p[1] === 'number' || typeof p[1] === 'boolean')) ex[p[0]] = p[1]
+    }
+  }
+  const hdrs = {}
+  if (e.headers && typeof e.headers === 'object' && !Array.isArray(e.headers)) {
+    for (const p of Object.entries(e.headers)) {
+      const name = String(p[0]).trim().toLowerCase()
+      if (/^[a-z0-9-]{1,40}$/.test(name) && typeof p[1] === 'string' && p[1].length <= 512 && !/authorization/i.test(name)) hdrs[name] = p[1]
     }
   }
   return {
@@ -78,6 +86,7 @@ function normalizeCatalogEntry(e) {
     proxy: firstNonEmptyStr(e.proxy),
     chatPath: (typeof e.chatPath === 'string' && /^\/[\w\-./]*$/.test(e.chatPath)) ? e.chatPath : '',
     requestExtra: Object.keys(ex).length > 0 ? ex : undefined,
+    headers: Object.keys(hdrs).length > 0 ? hdrs : undefined,
     freeModels: pickModelIds(e.freeModels),
     // 字段别名全英文：getkey/signup 均指申请 Key 的页面；教程字段以 tutorial
     // 为准（旧目录的中文字段名继续兼容，仅不再对外展示）。

@@ -74,6 +74,11 @@ class MainActivity : AppCompatActivity() {
     registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       if (uri != null) rikkaImportFrom(uri)
     }
+  // dsh-router 凭据导出导入：.json / .txt（sqlite3 行输出）
+  private val dshrFileLauncher =
+    registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) dshrImportFrom(uri)
+    }
 
   /** JS 桥：WebUI 通过 window.AndroidBridge 调用宿主原生能力 */
   private inner class FreerouteBridge {
@@ -111,6 +116,14 @@ class MainActivity : AppCompatActivity() {
     fun pickRikkaImport() {
       runOnUiThread {
         rikkaFileLauncher.launch(arrayOf("application/json", "application/zip", "application/octet-stream", "*/*"))
+      }
+    }
+
+    /** 导入 dsh-router 凭据导出（JSON 或 sqlite3 行输出文本） */
+    @JavascriptInterface
+    fun pickDshrImport() {
+      runOnUiThread {
+        dshrFileLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
       }
     }
   }
@@ -184,6 +197,26 @@ class MainActivity : AppCompatActivity() {
 
   private fun toastUi(msg: String) = runOnUiThread {
     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+  }
+
+  /** 读取 dsh-router 凭据导出（JSON 或 sqlite3 行输出），原文回调 WebUI */
+  private fun dshrImportFrom(uri: Uri) {
+    Thread {
+      try {
+        val text = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+        if (text.isEmpty()) { toastUi("文件为空"); return@Thread }
+        runOnUiThread {
+          web.evaluateJavascript(
+            "window.__onDshrPicked && window.__onDshrPicked(${JSONObject.quote(text)})",
+            null
+          )
+          Toast.makeText(this, "已读取 ${displayNameOf(uri) ?: "导出文件"}，正在导入…", Toast.LENGTH_SHORT).show()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "dsh-router 导入读取失败", e)
+        toastUi("读取失败: ${e.message}")
+      }
+    }.start()
   }
 
   private fun displayNameOf(uri: Uri): String? {

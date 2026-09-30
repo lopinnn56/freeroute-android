@@ -124,6 +124,7 @@ const RPC_METHOD_ALIAS = {
   configExport: 'freeroute.config.export',
   configImport: 'freeroute.config.import',
   rikkaImport: 'freeroute.rikka.import',
+  dshrouterImport: 'freeroute.dshrouter.import',
   probe: 'freeroute.probe',
   test: 'freeroute.test',
   setDefault: 'freeroute.set-default',

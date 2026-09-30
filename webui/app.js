@@ -930,6 +930,25 @@ window.__onRikkaPicked = async function(text) {
     }
   } catch (e) { toast(e.message); }
 };
+
+// dsh-router 配置导入回调（Android 桥读取文件后调用）
+window.__onDshrPicked = async function(text) {
+  if (!text) { toast('dsh-router 导出内容为空'); return; }
+  toast('正在导入 dsh-router 凭据…');
+  try {
+    const r = await rpc('dshrouterImport', { text: text });
+    if (r && r.ok) {
+      const st = r.skippedSup || {};
+      const stTxt = Object.keys(st).map(k => k + '×' + st[k]).join('，');
+      toast('dsh-router 导入完成：供应商 ' + (r.suppliers || 0) + '，Key ' + (r.keys || 0) +
+        ' 把' + (stTxt ? '（跳过 ' + stTxt + '）' : ''));
+      refreshState();
+      renderService();
+    } else {
+      toast('dsh-router 导入失败: ' + ((r && r.error) || '未知'));
+    }
+  } catch (e) { toast(e.message); }
+};
 // 生成「配置备份」卡片：包含 导出配置 / 恢复配置 按钮，服务页顶部最显眼。
 function buildConfigBackupCard() {
   const card = el('div', 'card');
@@ -998,7 +1017,37 @@ function buildConfigBackupCard() {
   };
   rrow.appendChild(rikkaBtn);
   card.appendChild(rrow);
-  card.appendChild(el('div', 'up-note', '支持 RikkaHub 的 settings.json（或完整备份 .zip）导入其 OpenAI 兼容模型提供商：自动转为自定义上游并带入 API Key。'));
+
+  // dsh-router 凭据导入行
+  const drow = el('div', 'row gap');
+  drow.style.marginTop = '6px';
+  const dshrBtn = el('div', 'btn purple r3 flex1', '导入 dsh-router 凭据');
+  dshrBtn.style.cursor = 'pointer';
+  dshrBtn.onclick = () => {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickDshrImport === 'function') {
+      window.AndroidBridge.pickDshrImport();
+    } else {
+      const fi = el('input', '');
+      fi.type = 'file';
+      fi.accept = '.json,.txt';
+      fi.onchange = async function () {
+        const f = fi.files && fi.files[0];
+        if (!f) return;
+        window.__onDshrPicked(await f.text());
+      };
+      fi.click();
+    }
+  };
+  drow.appendChild(dshrBtn);
+  card.appendChild(drow);
+  card.appendChild(el('div', 'up-note',
+    'dsh-router 用户：先用 sqlite3 导出凭据（select supplier||\'|\'||uid||\'|\'||data from credentials;），把输出存为 .json/.txt 后在此导入；openrouter/codebuddy 等账号 Key 自动进对应上游的轮换环。'));
+
+  // 说明卡：dsh-router 族上游
+  card.appendChild(el('div', 'hr'));
+  card.appendChild(el('div', 'up-note',
+    '「CodeBuddy」「CodeBuddyEN」已内置（来自 dsh-router-codebuddy），在下方上游列表配 Key 即用；' +
+    'traework（TRAE SOLO）为非 OpenAI 协议，暂不内置，请参考 dsh-router-traework 项目在桌面端使用。'));
   return card;
 }
 

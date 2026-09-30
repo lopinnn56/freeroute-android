@@ -83,6 +83,68 @@ const FREELLMAPI_BASE_URLS = {
 // 首探前的种子与首选拍序。
 const BUILTIN_UPSTREAMS = [
   {
+    id: 'codebuddy', name: 'CodeBuddy（腾讯国内版）',
+    baseUrl: 'https://copilot.tencent.com/v2', keyRef: 'FREEROUTE_CODEBUDDY_API_KEY',
+    chatPath: '/chat/completions',
+    // CodeBuddy 网关要求 CLI 客户端指纹头（来自 dsh-router-codebuddy 实测），
+    // 缺失会被上游拒绝；这些头经 headers 字段在 chat/probe 时附加。
+    headers: {
+      'user-agent': 'CLI/2.108.1 CodeBuddy/2.108.1',
+      'x-product': 'SaaS',
+      'x-ide-type': 'CLI',
+      'x-ide-name': 'CLI',
+      'x-requested-with': 'XMLHttpRequest',
+      'x-codebuddy-request': '1'
+    },
+    signupUrl: 'https://copilot.tencent.com',
+    note: '来自 dsh-router-codebuddy：腾讯 CodeBuddy 国内版，OAuth 登录获取 token 后填入；免费额度按 /billing/meter 计量。模型清单为插件内置 fallback。',
+    defaultModel: 'deepseek-v4-flash',
+    freeModels: ['deepseek-v4-pro', 'deepseek-v4-flash', 'glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'minimax-m3', 'kimi-k3-1', 'kimi-k2.7', 'hy4-preview', 'hy3', 'hunyuan-chat'],
+    models: [
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1000000 },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+      { id: 'glm-5.3', name: 'GLM 5.3', contextWindow: 1000000 },
+      { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', contextWindow: 1000000 },
+      { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 1000000 },
+      { id: 'minimax-m3', name: 'MiniMax M3', contextWindow: 512000 },
+      { id: 'kimi-k3-1', name: 'Kimi K3.1', contextWindow: 1000000 },
+      { id: 'kimi-k2.7', name: 'Kimi K2.7', contextWindow: 256000 },
+      { id: 'hy4-preview', name: 'Hunyuan 4 Preview', contextWindow: 1000000 },
+      { id: 'hy3', name: 'Hunyuan 3', contextWindow: 192000 },
+      { id: 'hunyuan-chat', name: 'Hunyuan Chat', contextWindow: 200000 }
+    ]
+  },
+  {
+    id: 'codebuddy-en', name: 'CodeBuddyEN（国际版）',
+    baseUrl: 'https://www.workbuddy.ai', keyRef: 'FREEROUTE_CODEBUDDY_EN_API_KEY',
+    // 国际版优先 /console 路径，404/405 回退 /v2（workbuddy2api R9）——
+    // FreeRoute 单路径模型下固定 /console/chat/completions，失败可在「高级」里改 chatPath 为 /v2/chat/completions。
+    chatPath: '/console/chat/completions',
+    headers: {
+      'user-agent': 'WorkBuddy/2.108.1',
+      'x-product': 'SaaS',
+      'x-ide-type': 'DESKTOP',
+      'x-requested-with': 'XMLHttpRequest'
+    },
+    signupUrl: 'https://www.workbuddy.ai',
+    note: '来自 dsh-router-codebuddy：腾讯 WorkBuddy 国际版，与国内版同族同契约；请求失败时到「高级 JSON」把 chatPath 改为 /v2/chat/completions 重试。',
+    defaultModel: 'deepseek-v4-flash',
+    freeModels: ['deepseek-v4-pro', 'deepseek-v4-flash', 'glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'minimax-m3', 'kimi-k3-1', 'kimi-k2.7', 'hy4-preview', 'hy3', 'hunyuan-chat'],
+    models: [
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1000000 },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+      { id: 'glm-5.3', name: 'GLM 5.3', contextWindow: 1000000 },
+      { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', contextWindow: 1000000 },
+      { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 1000000 },
+      { id: 'minimax-m3', name: 'MiniMax M3', contextWindow: 512000 },
+      { id: 'kimi-k3-1', name: 'Kimi K3.1', contextWindow: 1000000 },
+      { id: 'kimi-k2.7', name: 'Kimi K2.7', contextWindow: 256000 },
+      { id: 'hy4-preview', name: 'Hunyuan 4 Preview', contextWindow: 1000000 },
+      { id: 'hy3', name: 'Hunyuan 3', contextWindow: 192000 },
+      { id: 'hunyuan-chat', name: 'Hunyuan Chat', contextWindow: 200000 }
+    ]
+  },
+  {
     id: 'opencode', name: 'OpenCode Zen',
     baseUrl: 'https://opencode.ai/zen/v1', keyRef: 'FREEROUTE_OPENCODE_API_KEY',
     signupUrl: 'https://opencode.ai/zen',
@@ -224,6 +286,14 @@ function sanitizeConfig(raw) {
           if (Object.keys(ex).length > 0) cu.requestExtra = ex
         }
         if (typeof c.proxy === 'string' && /^https?:\/\//.test(c.proxy)) cu.proxy = c.proxy.trim()
+        if (c.headers && typeof c.headers === 'object' && !Array.isArray(c.headers)) {
+          const hh = {}
+          for (const p of Object.entries(c.headers)) {
+            const name = String(p[0]).trim().toLowerCase()
+            if (/^[a-z0-9-]{1,40}$/.test(name) && typeof p[1] === 'string' && p[1].length <= 512 && !/authorization/i.test(name)) hh[name] = p[1]
+          }
+          if (Object.keys(hh).length > 0) cu.headers = hh
+        }
         if (Array.isArray(c.freeModels) && c.freeModels.length > 0) cu.freeModels = pickModelIds(c.freeModels)
         if (typeof c.keyRef === 'string' && c.keyRef.length > 0) cu.keyRef = c.keyRef
         if (c.noAuth === true) cu.noAuth = true
@@ -677,6 +747,7 @@ function log (message) {
         if (cu.baseUrl) merged.baseUrl = cu.baseUrl
         if (cu.chatPath) merged.chatPath = cu.chatPath
         if (cu.requestExtra) merged.requestExtra = cu.requestExtra
+        if (cu.headers) merged.headers = cu.headers
         if (cu.keyRef) merged.keyRef = cu.keyRef
         if (cu.noAuth) merged.noAuth = true
         if (cu.proxy) merged.proxy = String(cu.proxy)
@@ -812,6 +883,11 @@ function log (message) {
         const url = String(u.baseUrl).replace(/\/+$/, '') + '/models'
         const headers = { accept: 'application/json' }
         if (key) headers.authorization = 'Bearer ' + key
+        if (u.headers && typeof u.headers === 'object') {
+          for (const hk of Object.keys(u.headers)) {
+            if (!/^(authorization|host|content-length)$/i.test(hk)) headers[hk.toLowerCase()] = u.headers[hk]
+          }
+        }
         const r = await rawGet(url, 15000, headers, u.proxy)
         if (r.status !== 0 && (r.status < 200 || r.status >= 300)) throw mkFail('HTTP ' + r.status, 'HTTP_' + r.status)
         const parsed = JSON.parse(r.body)
@@ -1367,7 +1443,15 @@ function log (message) {
         argv.push(
           '-H', 'user-agent: ' + UA,
           '-H', 'http-referer: https://github.com/dushaobindoudou/dsh-freeroute',
-          '-H', 'x-title: dsh-freeroute',
+          '-H', 'x-title: dsh-freeroute')
+        // 上游声明的特征头（如 CodeBuddy 的 X-Product: SaaS）：附加在默认头之后可覆盖同名
+        if (upstream.headers && typeof upstream.headers === 'object') {
+          for (const hk of Object.keys(upstream.headers)) {
+            const hv = upstream.headers[hk]
+            if (typeof hv === 'string' && hv.length > 0) argv.push('-H', hk + ': ' + hv)
+          }
+        }
+        argv.push(
           '--data-binary', '@-', '-w', TRAILER)
         try {
           proc = subprocess.spawn({ argv: argv, cwd: '/tmp', stdio: { stdin: { data: body }, stdout: 'pipe', stderr: { maxBytes: 4096 } }, graceMs: 5000, signal: options.signal })
@@ -2472,6 +2556,132 @@ function log (message) {
         return { ok: true, added: added, updated: updated, skipped: skipped, keys: keys, skippedTypes: skippedTypes, details: details }
       } catch (e) { return { ok: false, error: emsg(e) } }
     }
+    // ---- dsh-router 配置导入 ----
+    // dsh-router（含 traework/codebuddy 等供应商插件）的账号凭据在其
+    // credentials.sqlite（credentials(supplier,uid,data)）里。用户先用
+    //   sqlite3 credentials.sqlite "select supplier||'|'||uid||'|'||data
+    //   from credentials;" > dshrouter-export.txt
+    // 或任意工具导出为 JSON 数组 [{supplier,uid,data|apiKey,name}]。
+    // 这里按 supplier 聚合：openrouter/codebuddy/codebuddy-en/nvidia/opencode
+    // 等 OpenAI 兼容供应商 → 对应 FreeRoute 上游（Key 写凭据环，多账号多把轮换）；
+    // 非 OpenAI 协议（traework 等）跳过并计数。
+    rpc['freeroute.dshrouter.import'] = async function (args) {
+      try {
+        const text = args && typeof args.text === 'string' ? args.text : ''
+        if (!text.trim()) return { ok: false, error: '导入内容为空' }
+        let rows = null
+        try {
+          const parsed = JSON.parse(text)
+          if (Array.isArray(parsed)) rows = parsed
+          else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rows)) rows = parsed.rows
+          else if (parsed && typeof parsed === 'object' && parsed.suppliers && typeof parsed.suppliers === 'object') {
+            // 形如 {"suppliers":{"openrouter":{"accounts":[{"uid","apiKey","name"}]}}}
+            rows = []
+            for (const [sup, val] of Object.entries(parsed.suppliers)) {
+              const accs = (val && (Array.isArray(val) ? val : val.accounts)) || []
+              for (const a of accs) rows.push({ supplier: sup, uid: a && a.uid, data: a })
+            }
+          }
+        } catch (e) {
+          // 支持 sqlite3 默认输出：每行 "supplier|uid|data-json"（N 行文本）
+          const lines = text.split('\n').map(function (l) { return l.trim() }).filter(function (l) { return l.length > 0 })
+          rows = []
+          for (const l of lines) {
+            const i1 = l.indexOf('|')
+            if (i1 <= 0) continue
+            const sup = l.slice(0, i1)
+            const rest = l.slice(i1 + 1)
+            const i2 = rest.indexOf('|')
+            if (i2 < 0) continue
+            const uid = rest.slice(0, i2)
+            let blob = rest.slice(i2 + 1)
+            try { blob = JSON.parse(blob) } catch (e2) { }
+            rows.push({ supplier: sup, uid: uid, data: blob })
+          }
+          if (rows.length === 0) return { ok: false, error: '无法识别的导入格式（JSON 或 sqlite3 行输出）' }
+        }
+        if (!Array.isArray(rows) || rows.length === 0) return { ok: false, error: '导入内容为空或格式无效' }
+
+        // supplier id → FreeRoute 上游映射（OpenAI 兼容者）；未列出的跳过
+        const SUP_MAP = {
+          openrouter: { id: 'openrouter', name: 'OpenRouter' },
+          codebuddy: { id: 'codebuddy', name: 'CodeBuddy（腾讯国内版）' },
+          'codebuddy-en': { id: 'codebuddy-en', name: 'CodeBuddyEN（国际版）' },
+          nvidia: { id: 'nvidia', name: 'NVIDIA NIM' },
+          opencode: { id: 'opencode', name: 'OpenCode Zen' },
+          custom: { id: null, name: '' } // custom 按账号 data.baseUrl 动态建
+        }
+        const bySup = new Map()
+        let keys = 0
+        let skipped = 0
+        const skippedSup = {}
+        const details = []
+        for (const row of rows) {
+          if (!row || typeof row !== 'object') continue
+          const sup = String(row.supplier || '').trim()
+          const blob = row.data && typeof row.data === 'object' ? row.data : {}
+          const apiKey = String(blob.apiKey || blob.api_key || row.apiKey || '').trim()
+          if (!apiKey) { skipped += 1; continue }
+          if (!(sup in SUP_MAP)) { skipped += 1; skippedSup[sup] = (skippedSup[sup] || 0) + 1; continue }
+          const map = SUP_MAP[sup]
+          let targetId = map.id
+          let customEntry = null
+          if (sup === 'custom') {
+            // dsh-router 的 custom 供应商：data 里带 baseUrl
+            const baseUrl = String(blob.baseUrl || '').trim().replace(/\/+$/, '')
+            if (!/^https?:\/\//.test(baseUrl)) { skipped += 1; continue }
+            targetId = 'dshr-' + slugText(blob.name || 'custom')
+            customEntry = {
+              baseUrl: baseUrl,
+              name: (typeof blob.name === 'string' && blob.name) ? blob.name : 'dsh-router custom',
+              note: '来自 dsh-router 导入'
+            }
+          }
+          // Key 追加进该上游的凭据环（KEY / KEY_2 / …，至多 8 把）
+          const up = effectiveMap().get(targetId) || (customEntry ? { id: targetId, keyRef: 'FREEROUTE_DSHR_' + targetId.slice(5).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_KEY' } : null)
+          if (!up) { skipped += 1; continue }
+          // custom 首次导入：写成自定义上游
+          if (customEntry && !(userConfig.upstreams || {})[targetId]) {
+            if (!userConfig.upstreams) userConfig.upstreams = {}
+            userConfig.upstreams[targetId] = { custom: Object.assign({ keyRef: up.keyRef }, customEntry), enabled: true }
+            if (!Array.isArray(userConfig.order)) userConfig.order = []
+            if (!userConfig.order.includes(targetId)) userConfig.order.push(targetId)
+          }
+          const cur = bySup.get(targetId) || []
+          cur.push({ key: apiKey, name: (typeof (blob.name || row.name) === 'string' && (blob.name || row.name)) || row.uid || '' })
+          bySup.set(targetId, cur)
+        }
+        // 写凭据环
+        for (const [targetId, list] of bySup.entries()) {
+          const up = effectiveMap().get(targetId)
+          if (!up) continue
+          const refs = keyRefsFor(up)
+          // 先查现有环占了几把
+          let existing = 0
+          if (credentials !== undefined) {
+            for (const ref of refs) {
+              try {
+                const d = await credentials.describe(ref)
+                if (d && d.configured) existing += 1
+              } catch (e) { }
+            }
+          }
+          for (let i = 0; i < list.length && existing + i < refs.length; i++) {
+            try {
+              await credentials.set(refs[existing + i], list[i].key)
+              keys += 1
+            } catch (e) { }
+          }
+          details.push({ id: targetId, imported: list.length, keys: Math.min(list.length, refs.length - existing) })
+        }
+        if (keys > 0 || details.length > 0) {
+          writeConfigFile()
+          checkTakeover().catch(function () { })
+        }
+        log('[freeroute] dsh-router 导入：供应商 ' + details.length + '，Key ' + keys + '，跳过 ' + skipped)
+        return { ok: true, suppliers: details.length, keys: keys, skipped: skipped, skippedSup: skippedSup, details: details }
+      } catch (e) { return { ok: false, error: emsg(e) } }
+    }
     rpc['freeroute.state'] = async function () { return buildState() }
     rpc['freeroute.set-key'] = async function (args) {
       if (credentials === undefined) return { ok: false, error: 'credentials 服务不可用' }
@@ -2547,12 +2757,20 @@ function log (message) {
             const c = e.custom
             if (!c || typeof c !== 'object' || Array.isArray(c)) return 'custom 需为对象'
             for (const ck of Object.keys(c)) {
-              if (['baseUrl', 'keyRef', 'noAuth', 'name', 'note', 'signupUrl', 'defaultModel', 'models', 'proxy', 'freeModels', 'chatPath', 'requestExtra'].indexOf(ck) < 0) return '不允许的字段: custom.' + ck
+              if (['baseUrl', 'keyRef', 'noAuth', 'name', 'note', 'signupUrl', 'defaultModel', 'models', 'proxy', 'freeModels', 'chatPath', 'requestExtra', 'headers'].indexOf(ck) < 0) return '不允许的字段: custom.' + ck
             }
             if (c.baseUrl !== undefined && (typeof c.baseUrl !== 'string' || !/^https?:\/\//.test(c.baseUrl) || c.baseUrl.length > 2048)) return 'custom.baseUrl 无效（需 http(s):// 开头）'
             if (c.keyRef !== undefined && (typeof c.keyRef !== 'string' || !/^[A-Z0-9_]{1,64}$/.test(c.keyRef))) return 'custom.keyRef 无效（需大写字母/数字/下划线）'
             if (c.noAuth !== undefined && typeof c.noAuth !== 'boolean') return 'custom.noAuth 需为布尔值'
             if (c.proxy !== undefined && (typeof c.proxy !== 'string' || !/^https?:\/\//.test(c.proxy) || c.proxy.length > 512)) return 'custom.proxy 无效（需 http(s):// 开头）'
+            if (c.headers !== undefined) {
+              if (!c.headers || typeof c.headers !== 'object' || Array.isArray(c.headers)) return 'custom.headers 需为对象'
+              for (const hp of Object.entries(c.headers)) {
+                if (!/^[a-zA-Z0-9-]{1,40}$/.test(hp[0])) return 'custom.headers 头名无效: ' + hp[0]
+                if (typeof hp[1] !== 'string' || hp[1].length > 512) return 'custom.headers 值无效: ' + hp[0]
+                if (/^authorization$/i.test(hp[0])) return 'custom.headers 不允许 authorization（Key 走凭据环）'
+              }
+            }
             if (c.freeModels !== undefined) {
               if (!Array.isArray(c.freeModels) || c.freeModels.length > 64) return 'custom.freeModels 需为至多 64 项数组'
               for (const fm of c.freeModels) { if (typeof fm !== 'string' || fm.length > 200) return 'custom.freeModels[] 项无效' }
