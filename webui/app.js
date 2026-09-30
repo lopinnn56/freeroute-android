@@ -844,17 +844,24 @@ function buildCodeBuddyOps(upId) {
   const ops = [
     { label: '签到', method: 'cbCheckin', exec: (r) => {
       const okN = (r && r.success) || 0;
-      return r && r.ok ? ('签到完成 ' + okN + '/' + (r.total || 0) + ' 个账号') : ('签到失败: ' + ((r && r.error) || ''));
+      let base = r && r.ok ? ('签到完成 ' + okN + '/' + (r.total || 0) + ' 个账号') : ('签到失败: ' + ((r && r.error) || ''));
+      const rs = (r && r.results) || [];
+      const diag = rs.map(x => '[HTTP ' + x.status + '] ' + (x.msg || '') + (x.raw ? ' | ' + x.raw.slice(0, 120) : '')).join(' ‖ ');
+      return diag ? (base + ' ‖ ' + diag) : base;
     } },
     { label: '余额', method: 'cbUsage', exec: (r) => {
       if (!r || !r.ok) return '余额查询失败: ' + ((r && r.error) || '');
       const acts = r.results || [];
-      return '余额：' + acts.map(a => (a.nickname || '账号') + ' ' + (a.remain >= 0 ? a.remain + '/' + a.total : '—')).join('；');
+      const main = '余额：' + acts.map(a => (a.nickname || '账号') + ' ' + (a.remain >= 0 ? a.remain + '/' + a.total : '—')).join('；');
+      const diag = acts.map(a => (a.status ? '[HTTP ' + a.status + '] ' : '') + (a.raw ? a.raw.slice(0, 150) : '')).join(' ‖ ');
+      return diag ? (main + ' ‖ ' + diag) : main;
     } },
     { label: '成长任务', method: 'cbGrowth', exec: (r) => {
       if (!r || !r.ok) return '成长任务失败: ' + ((r && r.error) || '');
       const claims = (r.accounts || []).reduce((s, a) => s + (a.claimed || 0), 0);
-      return '成长任务：领取 ' + claims + ' 个奖励';
+      const base = '成长任务：领取 ' + claims + ' 个奖励';
+      const diag = (r.accounts || []).map(a => '可领' + (a.claimable || 0) + ' 原' + (a.raw ? ' | ' + a.raw.slice(0, 150) : '')).join(' ‖ ');
+      return diag ? (base + ' ‖ ' + diag) : base;
     } },
     { label: '连登+抽奖', method: 'cbStreak', exec: (r) => {
       if (!r || !r.ok) return '连登失败: ' + ((r && r.error) || '');

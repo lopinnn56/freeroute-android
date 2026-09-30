@@ -3030,7 +3030,7 @@ function log (message) {
           const r = await cbBillingMeter(cred, realm, CB_PATHS.dailyCheckin, 'POST', {})
           const msg = r.json && (r.json.msg || (r.json.data && r.json.data.msg)) || ''
           const already = /已签到|already|重复/i.test(msg) || (r.json && r.json.code !== 0 && /签到/i.test(msg))
-          results.push({ slot: ref, realm: realm, ok: r.status === 200 && r.json && r.json.code === 0, already: already, msg: msg || ('HTTP ' + r.status) })
+          results.push({ slot: ref, realm: realm, ok: r.status === 200 && r.json && r.json.code === 0, already: already, msg: msg || ('HTTP ' + r.status), status: r.status, raw: (r.body || '').slice(0, 300) })
         }
         const okCount = results.filter(x => x.ok || x.already).length
         return { ok: true, total: results.length, success: okCount, results: results }
@@ -3049,18 +3049,29 @@ function log (message) {
         for (const { ref, cred } of creds) {
           const realm = credRealm(cred)
           const r = await cbBillingMeter(cred, realm, CB_PATHS.billingMeter, 'POST', {})
-          let remain = -1, total = -1
+          // 真实结构（workbuddy2api CreditPackages）：
+          // 信封解包后为 data.Response.Data.Accounts[]，
+          // 每项用 CycleCapacityRemain/CycleCapacitySize（周期额度）
+          // 或 CapacityRemain/CapacitySize（总量额度）表示余额。
+          let remain = 0, total = 0, found = false
           try {
-            const list = r.json && r.json.data && (r.json.data.creditPackages || r.json.data.list || r.json.data.packages)
-            if (Array.isArray(list)) {
-              for (const pkg of list) {
-                const sz = Number(pkg.size || pkg.credit || 0)
-                const rm = Number(pkg.remain !== undefined ? pkg.remain : (pkg.cycleRemain || 0))
-                total += sz; remain += Math.max(0, Math.min(rm, sz))
+            const root = r.json && r.json.data
+            const respObj = (root && (root.Response || root.response)) || root
+            const dataObj = (respObj && (respObj.Data || respObj.data)) || respObj
+            const accounts = dataObj && (dataObj.Accounts || dataObj.accounts)
+            if (Array.isArray(accounts)) {
+              for (const a of accounts) {
+                const rm = Number(a.CycleCapacityRemain !== undefined ? a.CycleCapacityRemain : (a.capacityRemain || a.CapacityRemain || 0))
+                const sz = Number(a.CycleCapacitySize !== undefined ? a.CycleCapacitySize : (a.capacitySize || a.CapacitySize || 0))
+                if (sz > 0 || rm > 0) found = true
+                total += sz
+                remain += Math.max(0, Math.min(rm, sz > 0 ? sz : rm))
               }
             }
           } catch (e) { }
-          results.push({ realm: realm, nickname: cred.nickname || '', ok: r.status === 200 && r.json && r.json.code === 0, remain: remain, total: total, msg: r.json && r.json.msg || '' })
+          if (!found) { remain = -1; total = -1 }
+          const raw = (r.body || '').slice(0, 300)
+          results.push({ realm: realm, nickname: cred.nickname || '', ok: r.status === 200 && r.json && r.json.code === 0, remain: remain, total: total, msg: (r.json && r.json.msg) || '', status: r.status, raw: raw })
         }
         return { ok: true, results: results }
       } catch (e) { return { ok: false, error: emsg(e) } }
@@ -3142,7 +3153,7 @@ function log (message) {
               details.push({ code: code, ok: ok })
             }
           }
-          all.push({ realm: realm, nickname: cred.nickname || '', ok: true, tasks: merged.size, claimable: claimable.length, claimed: claimed, details: details })
+          all.push({ realm: realm, nickname: cred.nickname || '', ok: true, tasks: merged.size, claimable: claimable.length, claimed: claimed, details: details, raw: (settled.find(x => x && x.body) || {}).body ? String((settled.find(x => x && x.body) || {}).body).slice(0, 300) : '' })
         }
         return { ok: true, accounts: all }
       } catch (e) { return { ok: false, error: emsg(e) } }
