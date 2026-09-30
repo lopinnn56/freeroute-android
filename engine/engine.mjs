@@ -855,7 +855,16 @@ function log (message) {
 
     async function maybeKey(up) {
       const ring = await keyRing(up)
-      return ring.length > 0 ? ring[0].key : ''
+      if (ring.length === 0) return ''
+      let key = ring[0].key
+      // CodeBuddy 族 JSON 凭据 {v:1,...}：Bearer 用里面的 accessToken（at）
+      if ((up.id === 'codebuddy' || up.id === 'codebuddy-en') && typeof key === 'string' && key.startsWith('{')) {
+        try {
+          const cred = JSON.parse(key)
+          if (cred && cred.v === 1 && typeof cred.at === 'string' && cred.at) key = cred.at
+        } catch (e) { }
+      }
+      return key
     }
 
     // 上游 /models 自带模态时采信（OpenRouter: architecture.input_modalities；
@@ -1412,7 +1421,18 @@ function log (message) {
       let completed = false
       let proc = null
       try {
-        const key = keyEntry.key
+        let key = keyEntry.key
+        // CodeBuddy 族凭据（workbuddy2api 协议）：
+        // 1) 凭据环值为 {v:1,...} JSON 且临到期 → 先调 refresh 端点换新写回；
+        // 2) JSON 里的 at 字段才是真正的 accessToken，chat 的 Bearer 用它。
+        if ((upstream.id === 'codebuddy' || upstream.id === 'codebuddy-en') && key.startsWith('{')) {
+          const refreshed = await maybeRefreshCodeBuddy(upstream, keyEntry.ref, key)
+          if (refreshed && refreshed.key) key = refreshed.key
+          try {
+            const cred = JSON.parse(key)
+            if (cred && cred.v === 1 && typeof cred.at === 'string' && cred.at) key = cred.at
+          } catch (e) { }
+        }
         const curl = await ensureCurl()
         // 非标网关（如 GMI autoroute）可用 chatPath 覆盖默认的 /chat/completions
         const url = String(upstream.baseUrl).replace(/\/+$/, '') + (upstream.chatPath || '/chat/completions')
@@ -2687,13 +2707,17 @@ function log (message) {
     // 流程：start 拿 authUrl → 浏览器打开 → 前端每 3s poll → 引擎查
     // token?state=... → code 11217 = 等待授权；code 0 = 拿到 accessToken，
     // 直接入该上游的凭据环（多账号自动递增 KEY_2/KEY_3…）。
+    // 凭据环值升级为 JSON {v:1, at, rt, exp, domain, nickname}（读取端兼容裸 token）。
     const OAUTH_PROVIDERS = {
       'codebuddy': {
         stateUrl: 'https://copilot.tencent.com/v2/plugin/auth/state',
         tokenUrl: 'https://copilot.tencent.com/v2/plugin/auth/token',
+        accountUrl: 'https://copilot.tencent.com/v2/plugin/login/account',
+        refreshUrl: 'https://copilot.tencent.com/v2/plugin/auth/token/refresh',
         domain: 'copilot.tencent.com',
+        origin: 'https://www.codebuddy.cn',
         baseHeaders: {
-          'user-agent': 'CLI/2.108.1 CodeBuddy/2.108.1',
+          'user-agent': 'CLI/2.63.2 CodeBuddy/2.63.2',
           'x-product': 'SaaS', 'x-ide-type': 'CLI', 'x-ide-name': 'CLI',
           'x-requested-with': 'XMLHttpRequest', 'x-codebuddy-request': '1'
         }
@@ -2701,7 +2725,10 @@ function log (message) {
       'codebuddy-en': {
         stateUrl: 'https://www.workbuddy.ai/v2/plugin/auth/state',
         tokenUrl: 'https://www.workbuddy.ai/v2/plugin/auth/token',
+        accountUrl: 'https://www.workbuddy.ai/v2/plugin/login/account',
+        refreshUrl: 'https://www.workbuddy.ai/v2/plugin/auth/token/refresh',
         domain: 'www.workbuddy.ai',
+        origin: 'https://www.workbuddy.ai',
         baseHeaders: {
           'user-agent': 'WorkBuddy/2.108.1',
           'x-product': 'SaaS', 'x-ide-type': 'DESKTOP', 'x-requested-with': 'XMLHttpRequest'
@@ -2709,6 +2736,58 @@ function log (message) {
       }
     }
     const oauthPending = new Map() // upstreamId -> { state, startedAt, deadline }
+
+    /** CodeBuddy 族通用请求头（origin/referer 按 realm，对齐 workbuddy2api）。 */
+    function codebuddyHeaders(p, extra) {
+      return Object.assign({
+        'content-type': 'application/json',
+        accept: 'application/json, text/plain, */*',
+        'x-requested-with': 'XMLHttpRequest',
+        origin: p.origin,
+        referer: p.origin + '/'
+      }, p.baseHeaders, extra || {})
+    }
+
+    /**
+     * CodeBuddy token 自动刷新：凭据值为 {v:1,...} JSON 且临到期（24h 内）
+     * 或签发超 15 天时，POST token/refresh（X-Refresh-Token 头）换新。
+     * 返回 {key}（新 JSON）或 null（无需/无法刷新，沿用旧值）。
+     */
+    async function maybeRefreshCodeBuddy(upstream, ref, keyRaw) {
+      try {
+        const p = OAUTH_PROVIDERS[upstream.id]
+        if (!p) return null
+        const cred = JSON.parse(keyRaw)
+        if (cred.v !== 1 || !cred.rt) return null
+        const exp = Number(cred.exp) || 0
+        const issuedAt = Number(cred.iat) || 0
+        const nearExpire = exp > 0 && Date.now() + 24 * 3600 * 1000 >= exp
+        const issuedLongAgo = issuedAt > 0 && Date.now() - issuedAt >= 15 * 24 * 3600 * 1000
+        if (!nearExpire && !issuedLongAgo) return null
+        const headers = codebuddyHeaders(p, {
+          'x-refresh-token': cred.rt,
+          'x-auth-refresh-source': 'plugin',
+          'x-domain': p.domain
+        })
+        const r = await oauthHttpRequest('POST', p.refreshUrl, headers, '{}')
+        if (r.status !== 200) return null
+        let j
+        try { j = JSON.parse(r.body) } catch (e) { return null }
+        if (!j || j.code !== 0 || !j.data || !j.data.accessToken) return null
+        const next = {
+          v: 1, at: j.data.accessToken,
+          rt: j.data.refreshToken || cred.rt,
+          exp: Date.now() + (Number(j.data.expiresIn) || 86400) * 1000,
+          iat: Date.now(),
+          domain: j.data.domain || cred.domain,
+          nickname: cred.nickname || ''
+        }
+        const keyJson = JSON.stringify(next)
+        if (credentials !== undefined && ref) { try { await credentials.set(ref, keyJson) } catch (e) { } }
+        log('[freeroute] ' + upstream.id + ' token 已自动刷新')
+        return { key: keyJson }
+      } catch (e) { return null }
+    }
 
     async function oauthHttpRequest(method, url, headers, body) {
       const curl = await ensureCurl()
@@ -2756,11 +2835,9 @@ function log (message) {
         const id = args && args.id
         const p = OAUTH_PROVIDERS[id]
         if (!p) return { ok: false, error: '该上游不支持链接登录: ' + id }
-        const headers = Object.assign({
-          'content-type': 'application/json', accept: 'application/json',
-          'x-domain': p.domain, 'x-no-authorization': 'true',
-          'x-no-user-id': 'true'
-        }, p.baseHeaders)
+        const headers = codebuddyHeaders(p, {
+          'x-domain': p.domain, 'x-no-authorization': 'true', 'x-no-user-id': 'true'
+        })
         const r = await oauthHttpRequest('POST', p.stateUrl + '?platform=CLI', headers, '{}')
         if (r.status !== 200) return { ok: false, error: 'state 请求失败 HTTP ' + r.status }
         let j
@@ -2780,11 +2857,11 @@ function log (message) {
         const pend = oauthPending.get(id)
         if (!p || !pend) return { ok: false, pending: false, error: '没有进行中的登录' }
         if (Date.now() > pend.deadline) { oauthPending.delete(id); return { ok: false, pending: false, error: '登录超时，请重试' } }
-        const headers = Object.assign({
+        const headers = codebuddyHeaders(p, {
           accept: 'application/json',
           'x-domain': p.domain, 'x-no-authorization': 'true',
           'x-no-user-id': 'true', 'x-no-enterprise-id': 'true', 'x-no-department-info': 'true'
-        }, p.baseHeaders)
+        })
         let r
         try { r = await oauthHttpRequest('GET', p.tokenUrl + '?state=' + encodeURIComponent(pend.state), headers, null) }
         catch (e) { return { ok: true, pending: true } }
@@ -2796,11 +2873,29 @@ function log (message) {
           oauthPending.delete(id)
           return { ok: false, pending: false, error: j.msg || '登录失败' }
         }
-        // 成功：写入该上游凭据环（自动递增下一把）
+        // 成功：凭据升级为 JSON（含 refreshToken，供临到期自动刷新）
         oauthPending.delete(id)
         const up = effectiveMap().get(id)
         if (!up) return { ok: false, pending: false, error: '找不到上游: ' + id }
-        const token = String(j.data.accessToken).trim()
+        // 拿账号昵称（workbuddy2api login/account，带 Bearer；失败不影响登录）
+        let nickname = ''
+        try {
+          const acctHeaders = Object.assign({}, headers, { authorization: 'Bearer ' + j.data.accessToken })
+          const ar = await oauthHttpRequest('GET', p.accountUrl + '?state=' + encodeURIComponent(pend.state), acctHeaders, null)
+          if (ar.status === 200) {
+            const aj = JSON.parse(ar.body)
+            if (aj && aj.code === 0 && aj.data) nickname = String(aj.data.nickname || aj.data.uid || '')
+          }
+        } catch (e) { }
+        const credJson = JSON.stringify({
+          v: 1,
+          at: String(j.data.accessToken),
+          rt: String(j.data.refreshToken || ''),
+          exp: Date.now() + (Number(j.data.expiresIn) || 86400) * 1000,
+          iat: Date.now(),
+          domain: String(j.data.domain || p.domain),
+          nickname: nickname
+        })
         if (credentials !== undefined) {
           const refs = keyRefsFor(up)
           let slot = -1
@@ -2811,12 +2906,12 @@ function log (message) {
             } catch (e) { if (i === refs.length - 1) slot = refs.length - 1 }
           }
           if (slot < 0) return { ok: false, pending: false, error: '凭据环已满（至多 8 把）' }
-          await credentials.set(refs[slot], token)
+          await credentials.set(refs[slot], credJson)
           try { await probeModels(up, true) } catch (e) { }
           try { await checkTakeover() } catch (e) { }
         }
-        log('[freeroute] OAuth 登录成功: ' + id + '（KEY' + (slot > 0 ? '_' + (slot + 1) : '') + '）')
-        return { ok: true, pending: false, success: true, slot: slot }
+        log('[freeroute] OAuth 登录成功: ' + id + (nickname ? '（' + nickname + '）' : '') + '（KEY' + (slot > 0 ? '_' + (slot + 1) : '') + '）')
+        return { ok: true, pending: false, success: true, slot: slot, nickname: nickname }
       } catch (e) { return { ok: false, error: emsg(e) } }
     }
 
