@@ -2901,9 +2901,10 @@ function log (message) {
           nickname: nickname,
           uid: uid
         })
+        // slot 需在块外声明：凭据写入成功后下面的日志与返回都要用它
+        let slot = -1
         if (credentials !== undefined) {
           const refs = keyRefsFor(up)
-          let slot = -1
           for (let i = 0; i < refs.length; i++) {
             try {
               const d = await credentials.describe(refs[i])
