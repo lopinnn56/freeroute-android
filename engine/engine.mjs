@@ -2877,14 +2877,18 @@ function log (message) {
         oauthPending.delete(id)
         const up = effectiveMap().get(id)
         if (!up) return { ok: false, pending: false, error: '找不到上游: ' + id }
-        // 拿账号昵称（workbuddy2api login/account，带 Bearer；失败不影响登录）
+        // 拿账号 uid + 昵称（workbuddy2api login/account，带 Bearer；失败不影响登录）
         let nickname = ''
+        let uid = ''
         try {
           const acctHeaders = Object.assign({}, headers, { authorization: 'Bearer ' + j.data.accessToken })
           const ar = await oauthHttpRequest('GET', p.accountUrl + '?state=' + encodeURIComponent(pend.state), acctHeaders, null)
           if (ar.status === 200) {
             const aj = JSON.parse(ar.body)
-            if (aj && aj.code === 0 && aj.data) nickname = String(aj.data.nickname || aj.data.uid || '')
+            if (aj && aj.code === 0 && aj.data) {
+              nickname = String(aj.data.nickname || '')
+              uid = String(aj.data.uid || '')
+            }
           }
         } catch (e) { }
         const credJson = JSON.stringify({
@@ -2894,7 +2898,8 @@ function log (message) {
           exp: Date.now() + (Number(j.data.expiresIn) || 86400) * 1000,
           iat: Date.now(),
           domain: String(j.data.domain || p.domain),
-          nickname: nickname
+          nickname: nickname,
+          uid: uid
         })
         if (credentials !== undefined) {
           const refs = keyRefsFor(up)
@@ -2982,7 +2987,8 @@ function log (message) {
         authorization: 'Bearer ' + cred.at,
         'accept-language': realm === 'global' ? 'en-US,en' : 'zh-CN,zh'
       }, p.baseHeaders, extraHeaders || {})
-      if (cred.nickname) { /* X-User-Id 无法可靠携带（uid 未存），服务端按 token 识别 */ }
+      // workbuddy2api BillingHeaders：带 X-User-Id（uid 由登录时 account 端点捕获）
+      if (cred.uid) headers['x-user-id'] = String(cred.uid)
       const r = await oauthHttpRequest(method, url, headers, body ? JSON.stringify(body) : null)
       let j = null
       try { j = JSON.parse(r.body) } catch (e) { }
@@ -3071,30 +3077,71 @@ function log (message) {
         for (const { ref, cred } of creds) {
           const realm = credRealm(cred)
           const base = CB_REALM[realm].chat
-          const lr = await cbOpsRequest(cred, realm, base, CB_PATHS.tasksList, 'GET', null)
-          if (lr.status !== 200 || !lr.json || lr.json.code !== 0) {
-            all.push({ realm: realm, nickname: cred.nickname || '', ok: false, msg: lr.json && lr.json.msg || ('HTTP ' + lr.status) })
+          // 双口径：默认 + 小程序（X-Client-Platform: miniprogram）。
+          // workbuddy2api 实测 mp 列表是默认口径的**超集**（含小程序专属任务），
+          // 按 task_code 去重合并，缺失任一口径不影响另一个。
+          const listReqs = [
+            cbOpsRequest(cred, realm, base, CB_PATHS.tasksList, 'GET', null),
+            cbOpsRequest(cred, realm, base, CB_PATHS.tasksList, 'GET', null, { 'x-client-platform': 'miniprogram' })
+          ]
+          const settled = []
+          for (const rq of listReqs) {
+            try { settled.push(await rq) } catch (e) { settled.push(null) }
+          }
+          const merged = new Map()
+          let listOk = false
+          let listErr = ''
+          for (const res of settled) {
+            if (!res || res.status !== 200 || !res.json || res.json.code !== 0) {
+              if (res && res.json && res.json.msg) listErr = res.json.msg
+              continue
+            }
+            listOk = true
+            const tasks = (res.json.data && (res.json.data.tasks || res.json.data.list)) || []
+            for (const t of tasks) {
+              if (!t || !t.task_code) continue
+              if (!merged.has(t.task_code)) merged.set(t.task_code, t)
+            }
+          }
+          if (!listOk) {
+            all.push({ realm: realm, nickname: cred.nickname || '', ok: false, msg: listErr || '任务列表请求失败' })
             continue
           }
-          const tasks = (lr.json.data && (lr.json.data.tasks || lr.json.data.list)) || []
-          let claimed = 0
+          // 可领判定（对齐 workbuddy2api）：accept_status != 'claimed'
+          // 且 target > 0 且 current >= target（progress 对象优先）
           const claimable = []
-          for (const t of tasks) {
-            // 领取条件：已完成未领取（字段名实测有两种：claimed/claim_status）
-            const done = t.status === 'finished' || t.status === 'completed' || t.finished === true
-            const notClaimed = !t.claimed && t.claim_status !== 'claimed' && t.claimed !== true
-            if (done && notClaimed && t.task_code) claimable.push(t.task_code)
+          for (const t of merged.values()) {
+            let cur = Number(t.current || 0)
+            let tgt = Number(t.target || 0)
+            if (t.progress && typeof t.progress === 'object') {
+              cur = Number(t.progress.current || cur)
+              tgt = Number(t.progress.target || tgt)
+            }
+            const claimedAlready = String(t.accept_status || '') === 'claimed' || t.claimed === true
+            const canClaim = !claimedAlready && tgt > 0 && cur >= tgt
+            if (canClaim) claimable.push(String(t.task_code))
           }
+          let claimed = 0
+          const details = []
           if (claimable.length > 0) {
-            // accept 领取（批量）
-            await cbOpsRequest(cred, realm, base, CB_PATHS.tasksAccept, 'POST', { task_codes: claimable })
-            claimed = claimable.length
+            // 1) accept（批量，mp 头：上游实测缺头返回 task not found）
+            await cbOpsRequest(cred, realm, base, CB_PATHS.tasksAccept, 'POST', { task_codes: claimable }, { 'x-client-platform': 'miniprogram' })
+            // 2) 逐个 claim：mp 头优先；chat 域 400 时降级 Web 域（上游实测可领）
+            for (const code of claimable) {
+              let ok = false
+              let cr = await cbOpsRequest(cred, realm, base, CB_PATHS.taskClaim + encodeURIComponent(code) + '/claim', 'POST', null, { 'x-client-platform': 'miniprogram' })
+              if (cr.status === 200 && cr.json && cr.json.code === 0) ok = true
+              else if (cr.status === 400) {
+                // 降级：Web 域领奖端点
+                const webBase = realm === 'global' ? 'https://www.workbuddy.ai' : 'https://www.workbuddy.cn'
+                cr = await cbOpsRequest(cred, realm, webBase, CB_PATHS.taskClaim + encodeURIComponent(code) + '/claim', 'POST', null, { 'x-client-platform': 'web' })
+                if (cr.status === 200 && cr.json && cr.json.code === 0) ok = true
+              }
+              if (ok) claimed += 1
+              details.push({ code: code, ok: ok })
+            }
           }
-          // 逐个 claim（部分任务要求单独领取）
-          for (const code of claimable) {
-            try { await cbOpsRequest(cred, realm, base, CB_PATHS.taskClaim + encodeURIComponent(code) + '/claim', 'POST', {}) } catch (e) { }
-          }
-          all.push({ realm: realm, nickname: cred.nickname || '', ok: true, tasks: tasks.length, claimed: claimed, claimable: claimable })
+          all.push({ realm: realm, nickname: cred.nickname || '', ok: true, tasks: merged.size, claimable: claimable.length, claimed: claimed, details: details })
         }
         return { ok: true, accounts: all }
       } catch (e) { return { ok: false, error: emsg(e) } }
