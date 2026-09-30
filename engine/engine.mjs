@@ -3311,7 +3311,12 @@ function log (message) {
       if (!target) return { ok: false, error: '未知上游: ' + id }
       // 多 Key 支持：换行/逗号/分号分隔的多把 Key 依次存入
       // KEY / KEY_2 / KEY_3…（至多 8 把，多账号轮换免费额度）
-      const parts = key.split(/[\n,;]+/).map(function (x) { return x.trim() }).filter(function (x) { return x.length > 0 }).slice(0, 8)
+      // 例外：CodeBuddy 族的结构化凭证是 JSON 对象（含逗号），必须整体写入
+      // 第一把——若按逗号/换行切分会把它拆成 8 个碎片，凭证直接报废。
+      const isJsonCred = key.startsWith('{') && (function () {
+        try { const o = JSON.parse(key); return !!(o && o.v === 1 && o.at) } catch (e) { return false }
+      })()
+      const parts = isJsonCred ? [key] : key.split(/[\n,;]+/).map(function (x) { return x.trim() }).filter(function (x) { return x.length > 0 }).slice(0, 8)
       if (parts.length === 0) return { ok: false, error: '参数不完整' }
       try {
         const refs = keyRefsFor(target)
