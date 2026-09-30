@@ -182,7 +182,6 @@ class MainActivity : AppCompatActivity() {
     }
     // JS 桥：WebUI 通过 window.AndroidBridge 调用原生能力
     // （申请 Key 跳系统浏览器 / 导出选位置 / 导入选文件）
-    @SuppressLint("JavascriptInterface")
     web.addJavascriptInterface(FreerouteBridge(), "AndroidBridge")
 
     web.webChromeClient = object : WebChromeClient() {
