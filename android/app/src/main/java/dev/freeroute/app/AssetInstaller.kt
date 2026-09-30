@@ -35,12 +35,39 @@ object AssetInstaller {
     return dest
   }
 
+  /**
+   * 资源版本戳：对 assets 内全部文件的内容做哈希。
+   * 此前用 versionName:versionCode——两个版本号长期不变，导致装了新 APK
+   * 也不重新释放 assets，App 一直跑旧 WebUI/引擎（"改了没生效"的根因）。
+   * 改为内容哈希后，任何一次构建的任何文件变化都会触发重新释放。
+   */
   private fun versionStamp(ctx: Context): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    fun hashTree(assetPath: String) {
+      val children = ctx.assets.list(assetPath) ?: return
+      if (children.isEmpty()) {
+        ctx.assets.open(assetPath).use { input ->
+          val buf = ByteArray(64 * 1024)
+          while (true) {
+            val n = input.read(buf)
+            if (n <= 0) break
+            digest.update(buf, 0, n)
+          }
+        }
+        digest.update(assetPath.toByteArray())
+        return
+      }
+      for (name in children.sorted()) hashTree("$assetPath/$name")
+    }
     return try {
-      val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-      "${pi.versionName}:${pi.longVersionCode}"
+      hashTree(PROJECT_DIR)
+      digest.digest().joinToString("") { "%02x".format(it) }
     } catch (_: Exception) {
-      "unknown"
+      // 无法读 assets 时退回包版本号
+      try {
+        val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        "${pi.versionName}:${pi.longVersionCode}"
+      } catch (e2: Exception) { "unknown" }
     }
   }
 
